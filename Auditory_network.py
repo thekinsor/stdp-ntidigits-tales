@@ -128,7 +128,7 @@ network = SpikingNetwork(n_neurons=n_neurons, inpt_shape=(1, data_dim), n_inpt=d
                          thresh=thresh, tc_decay=tc_decay, theta_plus=theta_plus, x_tar=x_tar,
                          weight_factor=1.0, exc=exc, inh=inh, som=som, start_inhib=-5.0, max_inhib=-17.5, recurrency=recurrency, delayed=delayed)
 if gpu:
-    network.to(device="cuda")
+    network.cuda(device="cuda")
 print(summary(network))
 
 

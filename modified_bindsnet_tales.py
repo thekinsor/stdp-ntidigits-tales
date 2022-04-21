@@ -121,24 +121,22 @@ class FactoredDelayedConnection(Connection):
         #delaytime counter
         self.timecounter = 0
 
-        assert self.d is not None, "Delays have to be set for Delayed connections"
-        assert self.dmax is not None or self.dmin is not None, "Delay constraints have to be set"
-
         #get all delays one up for distinguishing
         self.d.add_(1)
 
-        self.d.to(device="cuda")
+        assert self.d is not None, "Delays have to be set for Delayed connections"
+        assert self.dmax is not None or self.dmin is not None, "Delay constraints have to be set"
 
         #record presynaptic traces
-        self.xpre = torch.zeros_like(self.w, device="cuda")
+        self.xpre = torch.zeros_like(self.w)
 
         #set up delay memory
-        self.delayed_spikes = self.d*(torch.zeros((self.dmax,1), dtype=int, device="cuda")).unsqueeze(1)
+        self.delayed_spikes = self.d*(torch.zeros((self.dmax,1))).unsqueeze(1)
 
-        print(self.xpre.device)
-        print(self.d.device)
-        print(self.w.device)
-        print(self.delayed_spikes.device)
+        #put everything correctly so it is part of network graph
+        self.d = torch.nn.Parameter(self.d, requires_grad=False)
+        self.delayed_spikes = torch.nn.Parameter(self.delayed_spikes, requires_grad=False)
+        self.xpre = torch.nn.Parameter(self.xpre, requires_grad=False)
 
 
     def compute(self, s: torch.Tensor) -> torch.Tensor:
@@ -150,19 +148,15 @@ class FactoredDelayedConnection(Connection):
         :return: Incoming spikes multiplied by synaptic weights (with or without
                 decaying spike activation).
         """
-        print(self.xpre.device)
-        print(self.d.device)
-        print(s.device)
-        print(self.w.device)
 
         #decay traces
-        self.xpre = torch.exp(self.xpre*1./-20)
+        self.xpre.new(self.xpre*torch.exp(-self.xpre))
 
         #save current spikes to mapped delayed spikes
         delays_to_save = (self.d.t()*s.view(s.size(0), -1).int()).t()
 
         for delay in range(self.dmax):
-            self.delayed_spikes[(self.timecounter + delay)%self.dmax,:,:].add_((delays_to_save == delay).float())
+            self.delayed_spikes[(self.timecounter + delay)%self.dmax,:,:] = torch.where(delays_to_save == (delay+1), 1., self.delayed_spikes[(self.timecounter + delay)%self.dmax,:,:].double())
 
         # Compute multiplication of spike activations by weights and add bias delayed by the synaptic delays.
         if self.b is None:
@@ -176,12 +170,20 @@ class FactoredDelayedConnection(Connection):
         #cycle through delays and reset
         self.timecounter += 1
         if self.timecounter >= self.dmax: self.timecounter = 0
-
+        
         #release stored spikes
         self.delayed_spikes[self.timecounter,:,:] = torch.zeros_like(self.delayed_spikes[self.timecounter,:,:])
 
         return post.view(s.size(0), *self.target.shape)
 
+    def reset_state_variables(self):
+        super().reset_state_variables
+
+        self.xpre.new(torch.zeros_like(self.w))
+        self.delayed_spikes.new(torch.zeros_like(self.delayed_spikes))
+        self.timecounter = 0
+    
+    
 
 class DiehlCookSTDP(LearningRule):
     # language=rst

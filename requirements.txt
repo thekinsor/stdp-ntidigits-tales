@@ -1,0 +1,12 @@
+matplotlib
+numpy
+opencv-python
+scikit-learn
+scipy
+tqdm
+h5py
+dill
+torch
+Pillow
+torchvision
+daal4py

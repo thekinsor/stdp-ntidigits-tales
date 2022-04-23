@@ -108,7 +108,7 @@ train_dataset = NMNIST(root=os.path.join("./", "data"), download=True, train=Tru
 # Declare auxiliary variables and parameters
 n_classes = 10
 n_train = len(train_dataset) if n_train == None else n_train
-update_interval = n_train // 600
+update_interval = n_train // 60
 data_dim_sq = train_dataset[0][0].shape[1]
 data_dim = int(np.sqrt(data_dim_sq))
 data_dim_sqrt = int(np.sqrt(data_dim))

@@ -450,7 +450,12 @@ class SpikingNetwork(Network):
         # Connections
         w = winit * torch.rand(self.n_inpt, self.n_neurons)
         if(delayed):
-            d = torch.randint_like(w,high=self.dmax, low=self.dmin)
+            #creation of extending delays (for now only 1D)
+            d = torch.ones(self.n_inpt, self.n_neurons)
+            for i in range(self.n_inpt):
+                for j in range(self.n_neurons):
+                    d[i, j] = np.abs(j-i)
+
             input_exc_conn = FactoredDelayedConnection(
                 source=input_layer,
                 target=exc_layer,
@@ -463,8 +468,8 @@ class SpikingNetwork(Network):
                 norm=norm,
                 weight_factor=weight_factor,  # PARAMETER
                 d=d,
-                dmin = self.dmin,
-                dmax = self.dmax,
+                dmin = torch.min(d).int(),
+                dmax = torch.max(d).int(),
             )
             input_exc_conn.update_rule.x_tar = x_tar  # PARAMETER
         else:
@@ -472,7 +477,7 @@ class SpikingNetwork(Network):
                 source=input_layer,
                 target=exc_layer,
                 w=w,
-                update_rule=DiehlCookSTDP,  # FUTURE WORK: Other learning rules could also be explored.
+                update_rule=PostPre,  # FUTURE WORK: Other learning rules could also be explored.
                 nu=nu,
                 reduction=reduction,
                 wmin=wmin,

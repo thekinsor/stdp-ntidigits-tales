@@ -18,6 +18,7 @@ from bindsnet.learning import PostPre, WeightDependentPostPre, LearningRule
 from bindsnet.network import Network
 from bindsnet.network.nodes import Input, LIFNodes, DiehlAndCookNodes, AdaptiveLIFNodes, Nodes
 from bindsnet.network.topology import Connection, LocalConnection, AbstractConnection, Conv2dConnection
+from custom_modules_tales import FactoredDelayedConnection, DiehlAndCookNodesContinual, DiehlCookDelayedSTDP
 
 
 class FactoredConnection(Connection):
@@ -72,118 +73,6 @@ class FactoredConnection(Connection):
         else:
             post = s.view(s.size(0), -1).float() @ (self.w * self.weight_factor) + self.b
         return post.view(s.size(0), *self.target.shape)
-
-class FactoredDelayedConnection(Connection):
-    def __init__(
-            self,
-            source: Nodes,
-            target: Nodes,
-            nu: Optional[Union[float, Sequence[float]]] = None,
-            reduction: Optional[callable] = None,
-            weight_decay: float = 0.0,
-            weight_factor: float = 1.0,
-            **kwargs
-    ) -> None:
-        # language=rst
-        """
-        Instantiates a :code:`Connection` object, slightly modified to include a factor multiplying the weights to
-        promote post-synaptic spikes as well as synaptic delays.
-
-        :param source: A layer of nodes from which the connection originates.
-        :param target: A layer of nodes to which the connection connects.
-        :param nu: Learning rate for both pre- and post-synaptic events.
-        :param reduction: Method for reducing parameter updates along the minibatch
-            dimension.
-        :param weight_decay: Constant multiple to decay weights by on each iteration.
-        :param weight_factor: Factor for the weights.
-
-        Keyword arguments:
-
-        :param LearningRule update_rule: Modifies connection parameters according to
-            some rule.
-        :param torch.Tensor w: Strengths of synapses.
-        :param torch.Tensor d: Value of delays.
-        :param torch.Tensor b: Target population bias.
-        :param float wmin: Minimum allowed value on the connection weights.
-        :param float wmax: Maximum allowed value on the connection weights.
-        :param float norm: Total weight per target neuron normalization constant.
-        :param int dmin: Minimum allowed value on the connection delays.
-        :param int dmax: Maximum allowed value on the connection delays.
-        """
-        super().__init__(source, target, nu, reduction, weight_decay, **kwargs)
-        self.weight_factor = weight_factor
-
-        #set up delay values
-        self.d = kwargs.get('d', torch.zeros_like(self.w))
-        self.dmin = kwargs.get('dmin', None)
-        self.dmax = kwargs.get('dmax', None)
-
-        #delaytime counter
-        self.timecounter = 0
-
-        #get all delays one up for distinguishing
-        self.d.add_(1)
-
-        assert self.d is not None, "Delays have to be set for Delayed connections"
-        assert self.dmax is not None or self.dmin is not None, "Delay constraints have to be set"
-
-        #record presynaptic traces
-        self.xpre = torch.zeros_like(self.w)
-
-        #set up delay memory
-        self.delayed_spikes = self.d*(torch.zeros((self.dmax,1))).unsqueeze(1)
-
-        #put everything correctly so it is part of network graph
-        self.d = torch.nn.Parameter(self.d, requires_grad=False)
-        self.delayed_spikes = torch.nn.Parameter(self.delayed_spikes, requires_grad=False)
-        self.xpre = torch.nn.Parameter(self.xpre, requires_grad=False)
-
-
-    def compute(self, s: torch.Tensor) -> torch.Tensor:
-        # language=rst
-        """
-        Compute pre-activations given spikes using connection weights and weight factor.
-
-        :param s: Incoming spikes.
-        :return: Incoming spikes multiplied by synaptic weights (with or without
-                decaying spike activation).
-        """
-
-        #decay traces
-        self.xpre.new(self.xpre*torch.exp(-self.xpre))
-
-        #save current spikes to mapped delayed spikes
-        delays_to_save = (self.d.t()*s.view(s.size(0), -1).int()).t()
-
-        for delay in range(self.dmax):
-            self.delayed_spikes[(self.timecounter + delay)%self.dmax,:,:] = torch.where(delays_to_save == (delay+1), 1., self.delayed_spikes[(self.timecounter + delay)%self.dmax,:,:].double())
-
-        # Compute multiplication of spike activations by weights and add bias delayed by the synaptic delays.
-        if self.b is None:
-            post = ((self.w * self.weight_factor)*(self.delayed_spikes[self.timecounter,:,:] == 1).float()).sum(dim=0)
-        else:
-            post = ((self.w * self.weight_factor)*(self.delayed_spikes[self.timecounter,:,:] == 1).float()).sum(dim=0) + self.b
-
-        #save the traces
-        self.xpre.add_((self.delayed_spikes[self.timecounter,:,:] == 1).float())
-
-        #cycle through delays and reset
-        self.timecounter += 1
-        if self.timecounter >= self.dmax: self.timecounter = 0
-        
-        #release stored spikes
-        self.delayed_spikes[self.timecounter,:,:] = torch.zeros_like(self.delayed_spikes[self.timecounter,:,:])
-
-        return post.view(s.size(0), *self.target.shape)
-
-    def reset_state_variables(self):
-        super().reset_state_variables
-
-        self.xpre.new(torch.zeros_like(self.w))
-        self.delayed_spikes.new(torch.zeros_like(self.delayed_spikes))
-        self.timecounter = 0
-    
-    
 
 class DiehlCookSTDP(LearningRule):
     # language=rst
@@ -259,82 +148,6 @@ class DiehlCookSTDP(LearningRule):
 
         super().update()
 
-class DiehlCookDelayedSTDP(LearningRule):
-    # language=rst
-    """
-    STDP rule from `(Diehl & Cook 2015)<https://www.frontiersin.org/articles/10.3389/fncom.2015.00099/full>`_,
-    triggered only by post-synaptic spiking activity. The post-synaptic update is positive and is dependent on the
-    magnitude of the synaptic weights and on the pre-synaptic trace.
-    """
-
-    def __init__(
-            self,
-            connection: AbstractConnection,
-            nu: Optional[float] = None,
-            reduction: Optional[callable] = None,
-            weight_decay: float = 0.0,
-            **kwargs
-    ) -> None:
-        # language=rst
-        """
-        Constructor for ``DiehlCookSTDP`` learning rule.
-
-        :param connection: An ``AbstractConnection`` object whose weights the
-            ``WeightDependentPostPre`` learning rule will modify.
-        :param nu: Single or pair of learning rates for pre- and post-synaptic events.
-        :param reduction: Method for reducing parameter updates along the batch
-            dimension.
-        :param weight_decay: Constant multiple to decay weights by on each iteration.
-        """
-        super().__init__(
-            connection=connection,
-            nu=nu,
-            reduction=reduction,
-            weight_decay=weight_decay,
-            **kwargs
-        )
-
-        assert self.source.traces, "Pre-synaptic nodes must record spike traces."
-        assert (
-                connection.wmin != -np.inf and connection.wmax != np.inf
-        ), "Connection must define finite wmin and wmax."
-
-        self.wmin = connection.wmin
-        self.wmax = connection.wmax
-        self.x_tar = 0.4
-
-        if isinstance(connection, (Connection, LocalConnection)):
-            self.update = self._connection_update
-        else:
-            raise NotImplementedError(
-                "This learning rule is not supported for this Connection type."
-            )
-
-    def _connection_update(self, **kwargs) -> None:
-        # language=rst
-        """
-        Diehl&Cook's learning rule for ``Connection`` subclass of ``AbstractConnection``
-        class.
-        """
-        batch_size = self.source.batch_size
-
-        source_x = self.connection.xpre #self.source.x.view(batch_size, -1).unsqueeze(2)
-
-        target_s = self.target.s.view(batch_size, -1).unsqueeze(1).float()
-
-        update = 0
-
-        # Post-synaptic update.
-        if self.nu is not None:
-            outer_product = self.reduction(torch.where(target_s.bool(), source_x - self.x_tar,
-                                                       torch.zeros_like(source_x)), dim=0)
-            update += self.nu[1] * outer_product * torch.pow((self.wmax - self.connection.w), 0.2)
-
-        self.connection.w += update
-
-        super().update()
-
-
 class SpikingNetwork(Network):
     # language=rst
     """
@@ -370,8 +183,8 @@ class SpikingNetwork(Network):
             inhib_scaling: float = 0.75,
             recurrency: bool = False,
             delayed: bool = False,
-            dmin: int = 5,
-            dmax: int = 40,
+            dmin: int = 0,
+            dmax: int = 100,
     ) -> None:
         # language=rst
         """
@@ -427,12 +240,12 @@ class SpikingNetwork(Network):
 
         # Layers
         input_layer = Input(
-            n=self.n_inpt, shape=self.inpt_shape, traces=True, tc_trace=80.0
+            n=self.n_inpt, shape=self.inpt_shape, traces=True, tc_trace=20.0
         )
         # FUTURE WORK: The time constant of the pre-synaptic trace has deeper implications than the membrane potential one. We started exploring it but couldn't get conclusive results due to some bugs in the code.
 
-        # FUTURE WORK: These are basically modified ALIF nodes. Exploring other neuron models is a possible line of work.
-        exc_layer = DiehlAndCookNodes(
+        # FUTURE WORK: These are basically modified ALIF nodes(without turning the threshold adaptation of after learning). Exploring other neuron models is a possible line of work.
+        exc_layer = DiehlAndCookNodesContinual(
             n=self.n_neurons,  # PARAMETER
             traces=self.recurrency, #has to be true to make recurrent connections
             rest=-65.0,
@@ -450,17 +263,24 @@ class SpikingNetwork(Network):
         # Connections
         w = winit * torch.rand(self.n_inpt, self.n_neurons)
         if(delayed):
-            #creation of extending delays (for now only 1D)
-            d = torch.ones(self.n_inpt, self.n_neurons)
-            for i in range(self.n_inpt):
-                for j in range(self.n_neurons):
-                    d[i, j] = np.abs(j-i)
+            # #creation of extending delays
+            # d = torch.ones(self.n_inpt, self.n_neurons)
+
+            # for i in range(self.n_inpt):
+            #     for j in range(self.n_neurons):
+            #         d[i, j] = np.abs(j-i)
+
+            #random weights
+            d = torch.randint(low=dmin, high=dmax, size=(self.n_inpt, self.n_neurons))
+
+            #time constant for trace decays
+            alpha = np.exp(- self.dt / tc_decay)
 
             input_exc_conn = FactoredDelayedConnection(
                 source=input_layer,
                 target=exc_layer,
                 w=w,
-                update_rule=DiehlCookSTDP,  # FUTURE WORK: Other learning rules could also be explored.
+                update_rule=DiehlCookDelayedSTDP,  # FUTURE WORK: Other learning rules could also be explored.
                 nu=nu,
                 reduction=reduction,
                 wmin=wmin,
@@ -470,6 +290,7 @@ class SpikingNetwork(Network):
                 d=d,
                 dmin = torch.min(d).int(),
                 dmax = torch.max(d).int(),
+                alpha=alpha,
             )
             input_exc_conn.update_rule.x_tar = x_tar  # PARAMETER
         else:
@@ -477,7 +298,7 @@ class SpikingNetwork(Network):
                 source=input_layer,
                 target=exc_layer,
                 w=w,
-                update_rule=PostPre,  # FUTURE WORK: Other learning rules could also be explored.
+                update_rule=DiehlCookSTDP,  # FUTURE WORK: Other learning rules could also be explored.
                 nu=nu,
                 reduction=reduction,
                 wmin=wmin,
@@ -492,20 +313,43 @@ class SpikingNetwork(Network):
 
         #add a simple recurrency
         if self.recurrency:
-            w = winit * torch.rand(self.n_neurons, self.n_neurons)
-            exc_exc_conn = FactoredConnection(
-                source=exc_layer,
-                target=exc_layer,
-                w=w,
-                update_rule=DiehlCookSTDP,  # FUTURE WORK: Other learning rules could also be explored.
-                nu=nu,
-                reduction=reduction,
-                wmin=wmin,
-                wmax=wmax,
-                norm=norm,
-                weight_factor=weight_factor,  # PARAMETER
-            )
-            input_exc_conn.update_rule.x_tar = x_tar  # PARAMETER
+            if(delayed):
+                #random weights
+                d = torch.randint(low=dmin, high=dmax, size=(self.n_neurons, self.n_neurons))
+
+                w = winit * torch.rand(self.n_neurons, self.n_neurons)
+                exc_exc_conn = FactoredDelayedConnection(
+                    source=exc_layer,
+                    target=exc_layer,
+                    w=w,
+                    update_rule=DiehlCookSTDP,  # FUTURE WORK: Other learning rules could also be explored.
+                    nu=nu,
+                    reduction=reduction,
+                    wmin=wmin,
+                    wmax=wmax,
+                    norm=norm,
+                    weight_factor=weight_factor,  # PARAMETER
+                    d=d,
+                    dmin = torch.min(d).int(),
+                    dmax = torch.max(d).int(),
+                    alpha=alpha,
+                )
+                input_exc_conn.update_rule.x_tar = x_tar  # PARAMETER
+            else:
+                w = winit * torch.rand(self.n_neurons, self.n_neurons)
+                exc_exc_conn = FactoredConnection(
+                    source=exc_layer,
+                    target=exc_layer,
+                    w=w,
+                    update_rule=DiehlCookDelayedSTDP,  # FUTURE WORK: Other learning rules could also be explored.
+                    nu=nu,
+                    reduction=reduction,
+                    wmin=wmin,
+                    wmax=wmax,
+                    norm=norm,
+                    weight_factor=weight_factor,  # PARAMETER
+                )
+                input_exc_conn.update_rule.x_tar = x_tar  # PARAMETER
 
 
         if self.som:

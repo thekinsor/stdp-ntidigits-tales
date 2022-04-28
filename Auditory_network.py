@@ -90,7 +90,14 @@ directories = ["results", "results/" + filename, "results/" + filename + "/weigh
 for directory in directories:
     if not os.path.exists(directory):
         os.makedirs(directory)
-print(directories)
+
+if(delayed):
+    if not os.path.exists("results/" + filename + "/delay_images"):
+        os.makedirs(directory)
+
+if(recurrency):
+    if not os.path.exists("results/" + filename + "/rec_weights_images"):
+        os.makedirs(directory)
 
 # Set up Gpu use
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -115,7 +122,7 @@ train_dataset = NTIDIGITS(root=os.path.join("./", "data"), download=True, train=
 # Declare auxiliary variables and parameters
 n_classes = 10
 n_train = len(train_dataset) if n_train == None else n_train
-update_interval = 5 #n_train // 600
+update_interval = n_train // 60
 data_dim = train_dataset.data[0].shape[1]
 data_dim_sqrt = int(np.sqrt(data_dim))
 n_neurons_sqrt = int(np.ceil(np.sqrt(n_neurons)))
@@ -322,10 +329,23 @@ for epoch in range(n_epochs):
 
         # Save plots at checkpoints and at the end of the training
         if (step >= (n_train - 1)) or (step % update_interval == 0 and step > 0):
-            cumulative_spikes[min(59, (step - 1) // update_interval), :].add_(torch.sum(spike_record.long(), (0, 1)))
+            cumulative_spikes[min(n_train // update_interval - 1, (step - 1) // update_interval), :].add_(torch.sum(spike_record.long(), (0, 1)))
             input_exc_weights = network.connections[("Input", "Excitatory")].w
             square_weights = get_square_weights(input_exc_weights.view(data_dim, n_neurons), n_neurons_sqrt,
                                                 data_dim_sqrt)
+            if(delayed):
+                input_exc_delays = network.connections[("Input", "Excitatory")].d
+                square_delays = get_square_weights(input_exc_delays.view(data_dim, n_neurons), n_neurons_sqrt,
+                                                data_dim_sqrt)
+                plot_weights(square_delays, wmin=network.dmin, wmax=network.dmax,
+                            save=f'./results/{filename}/delay_images/weights_{filename}_{step}.png')
+            if(recurrency):
+                input_rec_weights = network.connections[("Excitatory", "Excitatory")].w
+                square_rec_weights = get_square_weights(input_rec_weights.view(n_neurons, n_neurons), n_neurons_sqrt,
+                                                data_dim_sqrt)
+                plot_weights(square_rec_weights,
+                            save=f'./results/{filename}/rec_weights_images/weights_{filename}_{step}.png')
+
             square_assignments = get_square_assignments(assignments, n_neurons_sqrt)
             plot_weights(square_weights, im=weights_im,
                          save=f'./results/{filename}/weights_images/weights_{filename}_{step}.png')

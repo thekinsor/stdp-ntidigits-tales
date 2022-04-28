@@ -117,8 +117,12 @@ w_inhib = (torch.ones(n_neurons, n_neurons) - torch.diag(torch.ones(n_neurons)))
 pattern_repetition_counter = 0
 
 # Build the network
-network = torch.load("results/" + str(filename)+"/model_" + str(filename) + ".pt")
-if network.learning == True: network.learning= False
+network = SpikingNetwork(n_neurons=n_neurons, inpt_shape=(1, data_dim), n_inpt=data_dim, dt=dt,
+                         thresh=thresh, tc_decay=tc_decay, theta_plus=theta_plus, x_tar=x_tar,
+                         weight_factor=1.0, exc=exc, inh=inh, som=som, start_inhib=-5.0, max_inhib=-17.5, recurrency=recurrency, delayed=delayed)
+network_correct_data = torch.load("results/" + str(filename)+"/model_" + str(filename) + ".pt")
+
+network.load_state_dict(network_correct_data.state_dict())
 if gpu:
     network.cuda(device="cuda")
 print(summary(network))
@@ -254,7 +258,7 @@ plot_confusion_matrix(torch.Tensor.cpu(testing_proportion_pred), torch.Tensor.cp
 print("\nAll activity accuracy: %.2f" % (accuracy["all"] / n_test))
 print("Proportion weighting accuracy: %.2f \n" % (accuracy["proportion"] / n_test))
 
-print("Progress: %d / %d (%.4f seconds)" % (epoch + 1, n_epochs, t() - start))
+print("Progress: %d / %d (%.4f seconds)" % (0 + 1, n_epochs, t() - start))
 print("Testing complete.\n")
 
 # Save logs.
@@ -262,6 +266,6 @@ with open(f'./results/{filename}/log_{filename}.txt', 'w+') as log_file:
     print(f'''
     All activity accuracy: {accuracy["all"] / n_test}
     Proportion weighting accuracy: {accuracy["proportion"] / n_test} \n
-    Progress: {epoch + 1} / {n_epochs} ({t() - start} seconds)
+    Progress: {0 + 1} / {n_epochs} ({t() - start} seconds)
     Testing complete.\n
     Pattern repetitions during training: {pattern_repetition_counter}\n''', file=log_file)

@@ -47,7 +47,7 @@ parser.add_argument("--pattern_time", type=int, default=105, help='Duration (in 
 parser.add_argument("--filename", type=str, default='test', help='Name for the experiment (and resulting files).')
 # Simulation parameters
 parser.add_argument("--dt", type=float, default=1.0, help='Simulation timestep.')
-parser.add_argument("--n_epochs", type=int, default=1, help='Number of training epochs.')
+parser.add_argument("--n_epochs", type=int, default=3, help='Number of training epochs.')
 parser.add_argument("--n_workers", type=int, default=-1, help='Number of parallel processes to be created.')
 parser.add_argument("--seed", type=int, default=0, help='Seed for the pseudorandom number generation.')
 parser.add_argument("--progress_interval", type=int, default=10, help='Frequency of training progress reports.')

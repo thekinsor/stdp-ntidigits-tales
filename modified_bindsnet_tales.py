@@ -184,7 +184,9 @@ class SpikingNetwork(Network):
             recurrency: bool = False,
             delayed: bool = False,
             dmin: int = 0,
-            dmax: int = 100,
+            dmax: int = 200,
+            tc_trace_delay = 20.0,
+            tc_trace = 20.0,
     ) -> None:
         # language=rst
         """
@@ -237,6 +239,7 @@ class SpikingNetwork(Network):
         self.delayed = delayed
         self.dmin = dmin
         self.dmax = dmax
+        self.tc_trace_delay = tc_trace_delay
 
         # Layers
         input_layer = Input(
@@ -247,13 +250,14 @@ class SpikingNetwork(Network):
         # FUTURE WORK: These are basically modified ALIF nodes(without turning the threshold adaptation of after learning). Exploring other neuron models is a possible line of work.
         exc_layer = DiehlAndCookNodesContinual(
             n=self.n_neurons,  # PARAMETER
-            traces=self.recurrency, #has to be true to make recurrent connections
+            traces=True, #has to be true to make recurrent connections
             rest=-65.0,
             reset=-60.0,
             thresh=thresh,  # PARAMETER
             refrac=5,
             tc_decay=tc_decay,  # PARAMETER
-            tc_trace=20.0,
+            tc_trace=tc_trace,
+            tc_trace_delay = tc_trace_delay,
             theta_plus=theta_plus,  # PARAMETER
             tc_theta_decay=tc_theta_decay,
         )
@@ -262,6 +266,7 @@ class SpikingNetwork(Network):
 
         # Connections
         w = winit * torch.rand(self.n_inpt, self.n_neurons)
+        #w = torch.ones(self.n_inpt, self.n_neurons)
         if(delayed):
             # #creation of extending delays
             # d = torch.ones(self.n_inpt, self.n_neurons)
@@ -272,6 +277,9 @@ class SpikingNetwork(Network):
 
             #random weights
             d = torch.randint(low=dmin, high=dmax, size=(self.n_inpt, self.n_neurons))
+
+            #start with 0 delays
+            #d = torch.zeros_like(w)
 
             #time constant for trace decays
             alpha = np.exp(- self.dt / tc_decay)
@@ -291,6 +299,8 @@ class SpikingNetwork(Network):
                 dmin = torch.min(d).int(),
                 dmax = torch.max(d).int(),
                 alpha=alpha,
+                tc_trace_delay = tc_trace_delay,
+                tc_trace=tc_trace,
             )
             input_exc_conn.update_rule.x_tar = x_tar  # PARAMETER
         else:

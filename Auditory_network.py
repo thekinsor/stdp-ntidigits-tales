@@ -86,18 +86,18 @@ recurrency = args.recurrency
 delayed = args.delayed
 
 # Create directories
-directories = ["results", "results/" + filename, "results/" + filename + "/weights_images", "results/" + filename + "/assignment_images"]
+directories = ["results", "results/" + filename, "results/" + filename + "/weights_images", "results/" + filename + "/assignment_images/"]
 for directory in directories:
     if not os.path.exists(directory):
-        os.makedirs(directory)
+        os.makedirs(directory, exist_ok=True)
 
 if(delayed):
-    if not os.path.exists("results/" + filename + "/delay_images"):
-        os.makedirs(directory)
+    if not os.path.exists("results/" + filename + "/delay_images/"):
+        os.makedirs("results/" + filename + "/delay_images/", exist_ok=True)
 
 if(recurrency):
-    if not os.path.exists("results/" + filename + "/rec_weights_images"):
-        os.makedirs(directory)
+    if not os.path.exists("results/" + filename + "/rec_weights_images/"):
+        os.makedirs("results/" + filename + "/rec_weights_images/", exist_ok=True)
 
 # Set up Gpu use
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -293,20 +293,30 @@ for epoch in range(n_epochs):
 
         # Run the network on the input
         network.connections['Input', 'Excitatory'].weight_factor = 1.0
-        for spikes_check in range(5):
-            network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
+        network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
 
-            # Get voltage recording
-            exc_voltages = exc_voltage_monitor.get("v")
-            inh_voltages = inh_voltage_monitor.get("v")
+        # Get voltage recording
+        exc_voltages = exc_voltage_monitor.get("v")
+        inh_voltages = inh_voltage_monitor.get("v")
 
-            # If not enough spikes, present that sample again (with an increased weight factor)
-            excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
-            if excitatory_spikes.sum().sum() < 2:
-                network.connections['Input', 'Excitatory'].weight_factor *= 1.2
-                pattern_repetition_counter += 1
-            else:
-                break
+        excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
+
+
+        #pattern repetition mechanism
+        # for spikes_check in range(5):
+        #     network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
+
+        #     # Get voltage recording
+        #     exc_voltages = exc_voltage_monitor.get("v")
+        #     inh_voltages = inh_voltage_monitor.get("v")
+
+        #     # If not enough spikes, present that sample again (with an increased weight factor)
+        #     excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
+        #     if excitatory_spikes.sum().sum() < 2:
+        #         network.connections['Input', 'Excitatory'].weight_factor *= 1.2
+        #         pattern_repetition_counter += 1
+        #     else:
+        #         break
 
         # Add to spikes recording
         spike_record[step % update_interval].copy_(excitatory_spikes, non_blocking=True)
@@ -335,27 +345,29 @@ for epoch in range(n_epochs):
                                                 data_dim_sqrt)
             if(delayed):
                 input_exc_delays = network.connections[("Input", "Excitatory")].d
+                dmax = input_exc_delays.max()
+                dmin = input_exc_delays.min()
                 square_delays = get_square_weights(input_exc_delays.view(data_dim, n_neurons), n_neurons_sqrt,
                                                 data_dim_sqrt)
-                plot_weights(square_delays, wmin=network.dmin, wmax=network.dmax,
-                            save=f'./results/{filename}/delay_images/weights_{filename}_{step}.png')
+                plot_weights(square_delays, wmin=dmin, wmax=dmax,
+                            save=f'./results/{filename}/delay_images/delays_{filename}_{step}_epoch_{epoch}.png')
             if(recurrency):
                 input_rec_weights = network.connections[("Excitatory", "Excitatory")].w
                 square_rec_weights = get_square_weights(input_rec_weights.view(n_neurons, n_neurons), n_neurons_sqrt,
-                                                data_dim_sqrt)
+                                                n_neurons_sqrt)
                 plot_weights(square_rec_weights,
-                            save=f'./results/{filename}/rec_weights_images/weights_{filename}_{step}.png')
+                            save=f'./results/{filename}/rec_weights_images/weights_{filename}_{step}_epoch_{epoch}.png')
 
             square_assignments = get_square_assignments(assignments, n_neurons_sqrt)
             plot_weights(square_weights, im=weights_im,
-                         save=f'./results/{filename}/weights_images/weights_{filename}_{step}.png')
+                         save=f'./results/{filename}/weights_images/weights_{filename}_{step}_epoch_{epoch}.png')
             plot_assignments(square_assignments, im=assigns_im, save=f'./results/{filename}/assignment_images/assignments'
-                                                                     f'_{filename}_{step}.png')
+                                                                     f'_{filename}_{step}_epoch_{epoch}.png')
             plot_performance(accuracy, x_scale=update_interval, ax=perf_ax,
                              save=f'./results/{filename}/performance_{filename}.png')
             plot_confusion_matrix(torch.Tensor.cpu(training_proportion_pred), torch.Tensor.cpu(training_label_tensor),
-                                  save=f'./results/{filename}/confusion_matrix_{filename}.png')
-            plot_spikes_rate(cumulative_spikes, save=f'./results/{filename}/cumulative_spikes_{filename}.png',
+                                  save=f'./results/{filename}/confusion_matrix_{filename}_epoch_{epoch}.png')
+            plot_spikes_rate(cumulative_spikes, save=f'./results/{filename}/cumulative_spikes_{filename}_epoch_{epoch}.png',
                              update_interval=update_interval)
             torch.save(network, f'./results/{filename}/model_{filename}.pt')
             network.save(f'./results/{filename}/network_{filename}.npz')
@@ -393,17 +405,23 @@ for step, batch in enumerate(test_dataset):
         inputs = {k: v.cuda() for k, v in inputs.items()}
 
     # Run the network on the input
-    network.connections['Input', 'Excitatory'].weight_factor = 1.2
-    for spikes_check in range(5):
+    network.connections['Input', 'Excitatory'].weight_factor = 1.0
 
-        network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
+    network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
 
-        excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
-        # If not enough spikes, present that sample again (with increased weight factor)
-        if excitatory_spikes.sum().sum() < 2:
-            network.connections['Input', 'Excitatory'].weight_factor *= 1.2
-        else:
-            break
+    excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
+    
+    #pattern repetition mechanism
+    # for spikes_check in range(5):
+
+    #     network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
+
+    #     excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
+    #     # If not enough spikes, present that sample again (with increased weight factor)
+    #     if excitatory_spikes.sum().sum() < 2:
+    #         network.connections['Input', 'Excitatory'].weight_factor *= 1.2
+    #     else:
+    #         break
 
     # Add to spikes recording
     spike_record[0].copy_(excitatory_spikes, non_blocking=True)

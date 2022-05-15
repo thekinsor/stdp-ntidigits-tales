@@ -208,19 +208,23 @@ for step, batch in enumerate(test_dataset):
     inputs = {"Input": batch[0].view(int(pattern_time / dt), 1, 1, data_dim)}
     if gpu:
         inputs = {k: v.cuda() for k, v in inputs.items()}
+    
+    network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
+
+    excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
 
     # Run the network on the input
-    network.connections['Input', 'Excitatory'].weight_factor = 1.2
-    for spikes_check in range(5):
+    # network.connections['Input', 'Excitatory'].weight_factor = 1.2
+    # for spikes_check in range(5):
 
-        network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
+    #     network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
 
-        excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
-        # If not enough spikes, present that sample again (with increased weight factor)
-        if excitatory_spikes.sum().sum() < 2:
-            network.connections['Input', 'Excitatory'].weight_factor *= 1.2
-        else:
-            break
+    #     excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
+    #     # If not enough spikes, present that sample again (with increased weight factor)
+    #     if excitatory_spikes.sum().sum() < 2:
+    #         network.connections['Input', 'Excitatory'].weight_factor *= 1.2
+    #     else:
+    #         break
 
     # Add to spikes recording
     spike_record[0].copy_(excitatory_spikes, non_blocking=True)

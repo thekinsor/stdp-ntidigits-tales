@@ -26,16 +26,21 @@ from modified_bindsnet_tales import SpikingNetwork, plot_confusion_matrix, plot_
     plot_input_spikes, plot_assignments
 from NTIDIGITS import NTIDIGITS
 from NMNIST import NMNIST, SparseToDense
+from custom_modules_tales import FactoredDelayedConnection, DiehlAndCookNodesContinual, DiehlCookDelayedSTDP
+from bindsnet.network.nodes import LIFNodes
+from bindsnet.network.topology import Connection
+
+
+
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Train a SNN on the NTIDIGITS dataset.')
 # Neuron parameters
 parser.add_argument("--thresh", type=float, default=-52.0, help='Threshold for the membrane voltage.')
 parser.add_argument("--tc_decay", type=float, default=215.0, help='Time constant for the membrane voltage decay.')
+parser.add_argument("--tc_trace", type=float, default=5.0, help='Time constant for the trace decay.')
 # Learning rule parameters
 parser.add_argument("--x_tar", type=float, default=0.4, help='Target value for the pre-synaptic trace (STDP).')
-parser.add_argument("--tc_trace", type=float, default=20.0, help='Time constant for trace decay.')
-parser.add_argument("--tc_trace_delay", type=float, default=5.0, help='Time constant for capped trace decay.')
 # Network parameters
 parser.add_argument("--n_neurons", type=int, default=100, help='Number of neurons in the excitatory layer.')
 parser.add_argument("--exc", type=float, default=22.5, help='Strength of excitatory synapses.')
@@ -60,8 +65,9 @@ parser.add_argument("--progress_interval", type=int, default=10, help='Frequency
 parser.add_argument("--plot", dest="plot", action="store_true", help='Enable plotting (considerably slows the '
                                                                      'simulation).')
 parser.add_argument("--gpu", dest="gpu", action="store_true", help='Enable GPU acceleration.')
+parser.add_argument("--modelname", type=str, default='0_200_400n_nodlearning_norep_fullset_4_epochs', help='Name of old pretrained net to load.')
 # Defaults
-parser.set_defaults(plot=False, gpu=False, som=False, recurrency=False, delayed=False)
+parser.set_defaults(plot=False, gpu=False, som=False, recurrency=False, delayed=True)
 
 args = parser.parse_args()
 
@@ -69,6 +75,7 @@ thresh = args.thresh
 tc_decay = args.tc_decay
 x_tar = args.x_tar
 n_neurons = args.n_neurons
+n_neurons_L2 = 400
 exc = args.exc
 inh = args.inh
 theta_plus = args.theta_plus
@@ -86,18 +93,20 @@ plot = args.plot
 gpu = args.gpu
 recurrency = args.recurrency
 delayed = args.delayed
+modelname = args.modelname
 tc_trace = args.tc_trace
-tc_trace_delay = args.tc_trace_delay
 
 # Create directories
-directories = ["results", "results/" + filename, "results/" + filename + "/weights_images", "results/" + filename + "/assignment_images/"]
+directories = ["results", "results/" + filename, "results/" + filename + "/weights_images_L1", "results/" + filename + "/weights_images_L2", "results/" + filename + "/assignment_images_L2/"]
 for directory in directories:
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
 
 if(delayed):
-    if not os.path.exists("results/" + filename + "/delay_images/"):
-        os.makedirs("results/" + filename + "/delay_images/", exist_ok=True)
+    if not os.path.exists("results/" + filename + "/delay_images_L1/"):
+        os.makedirs("results/" + filename + "/delay_images_L1/", exist_ok=True)
+    if not os.path.exists("results/" + filename + "/delay_images_L2/"):
+        os.makedirs("results/" + filename + "/delay_images_L2/", exist_ok=True)
 
 if(recurrency):
     if not os.path.exists("results/" + filename + "/rec_weights_images/"):
@@ -126,33 +135,46 @@ train_dataset = NTIDIGITS(root=os.path.join("./", "data"), download=True, train=
 # Declare auxiliary variables and parameters
 n_classes = 10
 n_train = len(train_dataset) if n_train == None else n_train
-update_interval = n_train // 60
+update_interval = n_train // 2
 data_dim = train_dataset.data[0].shape[1]
 data_dim_sqrt = int(np.sqrt(data_dim))
 n_neurons_sqrt = int(np.ceil(np.sqrt(n_neurons)))
+n_neurons_sqrt_L2 = int(np.ceil(np.sqrt(n_neurons_L2)))
 c_inhib = torch.linspace(-5.0, -17.5, n_train // update_interval, device=device)
 w_inhib = (torch.ones(n_neurons, n_neurons) - torch.diag(torch.ones(n_neurons))).to(device)
 pattern_repetition_counter = 0
 
-# Build the network
+# Build the network, load the pretrained one and get the data
 network = SpikingNetwork(n_neurons=n_neurons, inpt_shape=(1, data_dim), n_inpt=data_dim, dt=dt,
                          thresh=thresh, tc_decay=tc_decay, theta_plus=theta_plus, x_tar=x_tar,
                          weight_factor=1.0, exc=exc, inh=inh, som=som, start_inhib=-5.0, max_inhib=-17.5,
-                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace, tc_trace_delay=tc_trace_delay)
+                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace)
+network_correct_data = torch.load("results/" + str(filename) +"/model_" + str(modelname) + ".pt")
+network.load_state_dict(network_correct_data.state_dict())
+
+network.train(mode=False)
+
+network2 = SpikingNetwork(n_neurons=n_neurons, inpt_shape=(1, n_neurons), n_inpt=n_neurons, dt=dt,
+                         thresh=thresh, tc_decay=tc_decay, theta_plus=theta_plus, x_tar=x_tar,
+                         weight_factor=40.0, exc=exc, inh=inh, som=som, start_inhib=-5.0, max_inhib=-17.5,
+                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace)
+
 if gpu:
     network.cuda(device="cuda")
-print(summary(network))
+    network2.cuda(device="cuda")
+
+print(summary(network2))
 
 
 # Record spikes during the simulation
-excitatory_spikes = torch.tensor((int(pattern_time / dt), n_neurons), dtype=torch.bool, device=device)
-spike_record = torch.zeros((update_interval, int(pattern_time / dt), n_neurons), device=device)
-cumulative_spikes = torch.zeros((n_train // update_interval, n_neurons), device=device)
+excitatory_spikes = torch.tensor((int(pattern_time / dt), n_neurons_L2), dtype=torch.bool, device=device)
+spike_record = torch.zeros((update_interval, int(pattern_time / dt), n_neurons_L2), device=device)
+cumulative_spikes = torch.zeros((n_train // update_interval, n_neurons_L2), device=device)
 
 # Neuron assignments and spike proportions
-assignments = -torch.ones(n_neurons, device=device)
-proportions = torch.zeros((n_neurons, n_classes), device=device)
-rates = torch.zeros((n_neurons, n_classes), device=device)
+assignments = -torch.ones(n_neurons_L2, device=device)
+proportions = torch.zeros((n_neurons_L2, n_classes), device=device)
+rates = torch.zeros((n_neurons_L2, n_classes), device=device)
 
 # Sequence of accuracy estimates
 accuracy = {"all": [], "proportion": []}
@@ -163,27 +185,34 @@ training_label_tensor = torch.zeros(0, dtype=torch.int64, device=device)
 
 # Set up monitors for spikes and voltages
 exc_voltage_monitor = Monitor(
-    network.layers["Excitatory"], ["v"], time=int(pattern_time / dt), device=device
+    network2.layers["Excitatory"], ["v"], time=int(pattern_time / dt), device=device
 )
 inh_voltage_monitor = Monitor(
-    network.layers["Inhibitory"], ["v"], time=int(pattern_time / dt), device=device
+    network2.layers["Inhibitory"], ["v"], time=int(pattern_time / dt), device=device
 )
-network.add_monitor(exc_voltage_monitor, name="exc_voltage")
-network.add_monitor(inh_voltage_monitor, name="inh_voltage")
+network2.add_monitor(exc_voltage_monitor, name="exc_voltage")
+network2.add_monitor(inh_voltage_monitor, name="inh_voltage")
 
-spikes = {}
+spikes1 = {}
 for layer in set(network.layers):
-    spikes[layer] = Monitor(
+    spikes1[layer] = Monitor(
         network.layers[layer], state_vars=["s"], time=int(pattern_time / dt), device=device
     )
-    network.add_monitor(spikes[layer], name="%s_spikes" % layer)
+    network.add_monitor(spikes1[layer], name="%s_spikes" % layer)
+
+spikes2 = {}
+for layer in set(network2.layers):
+    spikes2[layer] = Monitor(
+        network2.layers[layer], state_vars=["s"], time=int(pattern_time / dt), device=device
+    )
+    network2.add_monitor(spikes2[layer], name="%s_spikes" % layer)
 
 voltages = {}
-for layer in set(network.layers) - {"Input"}:
+for layer in set(network2.layers) - {"Input"}:
     voltages[layer] = Monitor(
-        network.layers[layer], state_vars=["v"], time=int(pattern_time / dt), device=device
+        network2.layers[layer], state_vars=["v"], time=int(pattern_time / dt), device=device
     )
-    network.add_monitor(voltages[layer], name="%s_voltages" % layer)
+    network2.add_monitor(voltages[layer], name="%s_voltages" % layer)
 
 inpt_ims, inpt_axes = None, None
 spike_ims, spike_axes = None, None
@@ -213,16 +242,16 @@ for epoch in range(n_epochs):
         if step > n_train:
             break
         # Growing inhibition strategy
-        elif network.som and (step > 0 and step % update_interval == 0):
-            for i in range(network.n_neurons):
-                for j in range(network.n_neurons):
-                    if i != j:
-                        x1, y1 = i // network.n_sqrt, i % network.n_sqrt
-                        x2, y2 = j // network.n_sqrt, j % network.n_sqrt
+        # elif network.som and (step > 0 and step % update_interval == 0):
+        #     for i in range(network.n_neurons):
+        #         for j in range(network.n_neurons):
+        #             if i != j:
+        #                 x1, y1 = i // network.n_sqrt, i % network.n_sqrt
+        #                 x2, y2 = j // network.n_sqrt, j % network.n_sqrt
         
-                        w_inhib[i, j] = max(network.max_inhib, c_inhib[(step - 1) // update_interval] *
-                                            network.inhib_scaling * np.sqrt(euclidean([x1, y1], [x2, y2])))
-            network.connections['Inhibitory', 'Excitatory'].w.copy_(w_inhib)
+        #                 w_inhib[i, j] = max(network.max_inhib, c_inhib[(step - 1) // update_interval] *
+        #                                     network.inhib_scaling * np.sqrt(euclidean([x1, y1], [x2, y2])))
+        #     network.connections['Inhibitory', 'Excitatory'].w.copy_(w_inhib)
         # Two-level inhibition strategy
         # elif network.som and step == 0.1 * n_train:
         #     w = -network.inh * (torch.ones(network.n_neurons, network.n_neurons)
@@ -297,14 +326,15 @@ for epoch in range(n_epochs):
         labels.append(batch[1])
 
         # Run the network on the input
-        network.connections['Input', 'Excitatory'].weight_factor = 1.0
+        #network.connections['Input', 'Excitatory'].weight_factor = 1.0
         network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
+        network2.run(inputs=spikes1["Excitatory"].get("s").squeeze(), time=pattern_time, input_time_dim=1)
 
         # Get voltage recording
         exc_voltages = exc_voltage_monitor.get("v")
         inh_voltages = inh_voltage_monitor.get("v")
 
-        excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
+        excitatory_spikes = spikes2["Excitatory"].get("s").squeeze()
 
 
         #pattern repetition mechanism
@@ -328,11 +358,11 @@ for epoch in range(n_epochs):
 
         # Optionally plot simulation information
         if plot:
-            input_exc_weights = network.connections[("Input", "Excitatory")].w
+            input_exc_weights = network2.connections[("Input", "Excitatory")].w
             square_weights = get_square_weights(input_exc_weights.view(data_dim, n_neurons), n_neurons_sqrt,
                                                 data_dim_sqrt)
             square_assignments = get_square_assignments(assignments, n_neurons_sqrt)
-            spikes_ = {layer: spikes[layer].get("s") for layer in spikes}
+            spikes_ = {layer: spikes2[layer].get("s") for layer in spikes2}
             voltages = {"Excitatory": exc_voltages, "Inhibitory": inh_voltages}
             spike_ims, spike_axes = plot_spikes(spikes_, ims=spike_ims, axes=spike_axes)
             weights_im = plot_weights(square_weights, im=weights_im)
@@ -345,28 +375,32 @@ for epoch in range(n_epochs):
         # Save plots at checkpoints and at the end of the training
         if (step >= (n_train - 1)) or (step % update_interval == 0 and step > 0):
             cumulative_spikes[min(n_train // update_interval - 1, (step - 1) // update_interval), :].add_(torch.sum(spike_record.long(), (0, 1)))
-            input_exc_weights = network.connections[("Input", "Excitatory")].w
-            square_weights = get_square_weights(input_exc_weights.view(data_dim, n_neurons), n_neurons_sqrt,
-                                                data_dim_sqrt)
+            #L2
+            input_exc_weights_L2 = network2.connections[("Excitatory", "Excitatory")].w
+            square_weights_L2 = get_square_weights(input_exc_weights_L2.view(n_neurons, n_neurons_L2), n_neurons_sqrt_L2,
+                                                n_neurons_sqrt)
             if(delayed):
-                input_exc_delays = network.connections[("Input", "Excitatory")].d
-                dmax = input_exc_delays.max()
-                dmin = input_exc_delays.min()
-                square_delays = get_square_weights(input_exc_delays.view(data_dim, n_neurons), n_neurons_sqrt,
-                                                data_dim_sqrt)
+                #L2
+                input_exc_delays_L2 = network2.connections[("Input", "Excitatory")].d
+                dmax = input_exc_delays_L2.max()
+                dmin = input_exc_delays_L2.min()
+                square_delays = get_square_weights(input_exc_delays_L2.view(n_neurons, n_neurons_L2), n_neurons_sqrt_L2,
+                                                n_neurons_sqrt)
                 plot_weights(square_delays, wmin=dmin, wmax=dmax,
-                            save=f'./results/{filename}/delay_images/delays_{filename}_{step}_epoch_{epoch}.png')
+                            save=f'./results/{filename}/delay_images_L2/delays_L2_{filename}_{step}_epoch_{epoch}.png')
             if(recurrency):
-                input_rec_weights = network.connections[("Excitatory", "Excitatory")].w
+                input_rec_weights = network2.connections[("Excitatory", "Excitatory")].w
                 square_rec_weights = get_square_weights(input_rec_weights.view(n_neurons, n_neurons), n_neurons_sqrt,
                                                 n_neurons_sqrt)
                 plot_weights(square_rec_weights,
                             save=f'./results/{filename}/rec_weights_images/weights_{filename}_{step}_epoch_{epoch}.png')
 
-            square_assignments = get_square_assignments(assignments, n_neurons_sqrt)
+            square_assignments = get_square_assignments(assignments, n_neurons_sqrt_L2)
             plot_weights(square_weights, im=weights_im,
-                         save=f'./results/{filename}/weights_images/weights_{filename}_{step}_epoch_{epoch}.png')
-            plot_assignments(square_assignments, im=assigns_im, save=f'./results/{filename}/assignment_images/assignments'
+                         save=f'./results/{filename}/weights_images_L1/weights_L1_{filename}_{step}_epoch_{epoch}.png')
+            plot_weights(square_weights_L2, im=weights_im,
+                         save=f'./results/{filename}/weights_images_L2/weights_L2_{filename}_{step}_epoch_{epoch}.png')
+            plot_assignments(square_assignments, im=assigns_im, save=f'./results/{filename}/assignment_images_L2/assignments'
                                                                      f'_{filename}_{step}_epoch_{epoch}.png')
             plot_performance(accuracy, x_scale=update_interval, ax=perf_ax,
                              save=f'./results/{filename}/performance_{filename}.png')
@@ -374,10 +408,11 @@ for epoch in range(n_epochs):
                                   save=f'./results/{filename}/confusion_matrix_{filename}_epoch_{epoch}.png')
             plot_spikes_rate(cumulative_spikes, save=f'./results/{filename}/cumulative_spikes_{filename}_epoch_{epoch}.png',
                              update_interval=update_interval)
-            torch.save(network, f'./results/{filename}/model_{filename}.pt')
-            network.save(f'./results/{filename}/network_{filename}.npz')
+            torch.save(network2, f'./results/{filename}/model_L2_{filename}.pt')
+            network2.save(f'./results/{filename}/network_L2_{filename}.npz')
 
         network.reset_state_variables()  # Reset state variables
+        network2.reset_state_variables()  # Reset state variables
 
 print("Progress: %d / %d (%.4f seconds)" % (epoch + 1, n_epochs, t() - start))
 print("Training complete.\n")
@@ -390,13 +425,13 @@ n_test = len(test_dataset) if n_test == None else n_test
 accuracy = {"all": 0, "proportion": 0}
 
 # Record spikes during the simulation
-spike_record = torch.zeros((1, int(pattern_time / dt), n_neurons), device=device)
+spike_record = torch.zeros((1, int(pattern_time / dt), n_neurons_L2), device=device)
 testing_proportion_pred = torch.zeros(n_test, dtype=torch.int64, device=device)
 testing_label_tensor = torch.zeros(n_test, dtype=torch.int64, device=device)
 
 # Test the network
 print("\nBegin testing\n")
-network.train(mode=False)
+network2.train(mode=False)
 start = t()
 
 pbar = tqdm(total=n_test)
@@ -410,11 +445,12 @@ for step, batch in enumerate(test_dataset):
         inputs = {k: v.cuda() for k, v in inputs.items()}
 
     # Run the network on the input
-    network.connections['Input', 'Excitatory'].weight_factor = 1.0
+    #network.connections['Input', 'Excitatory'].weight_factor = 1.0
 
     network.run(inputs=inputs, time=pattern_time, input_time_dim=1)
+    network2.run(inputs=spikes1["Excitatory"].get("s").squeeze(), time=pattern_time, input_time_dim=1)
 
-    excitatory_spikes = spikes["Excitatory"].get("s").squeeze()
+    excitatory_spikes = spikes2["Excitatory2"].get("s").squeeze()
     
     #pattern repetition mechanism
     # for spikes_check in range(5):
@@ -455,6 +491,7 @@ for step, batch in enumerate(test_dataset):
     testing_label_tensor[step] = label_tensor
 
     network.reset_state_variables()  # Reset state variables
+    network2.reset_state_variables()  # Reset state variables
     pbar.set_description_str("Test progress: ")
     pbar.update()
 

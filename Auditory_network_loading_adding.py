@@ -158,13 +158,13 @@ exc_layer_L2 = DiehlAndCookNodesContinual(
             thresh=thresh,  # PARAMETER
             refrac=5,
             tc_decay=tc_decay,  # PARAMETER
-            tc_trace=20.0,
-            tc_trace_delay = 20.0,
+            tc_trace=5.0,
+            tc_trace_delay = 5.0,
             theta_plus=theta_plus,  # PARAMETER
             tc_theta_decay= float(1e7),
         )
 inh_layer_L2 = LIFNodes(n=n_neurons_L2, traces=False, rest=-60.0, reset=-45.0, thresh=-40.0, tc_decay=10.0,
-                             refrac=2, tc_trace=20.0)
+                             refrac=2, tc_trace=5.0)
 
 #set up connections for the additional layers
 w = 0.3 * torch.rand(n_neurons, n_neurons_L2)
@@ -173,7 +173,8 @@ w = 0.3 * torch.rand(n_neurons, n_neurons_L2)
 d = torch.randint(low=0, high=200, size=(n_neurons, n_neurons_L2))
 
 #time constant for trace decays
-alpha = np.exp(- dt / tc_decay)
+alpha = np.exp(- dt / 5.0)
+alpha_delay = np.exp(- dt / 5.0)
 
 exc1_exc2_conn = FactoredDelayedConnection(
     source=network.layers["Excitatory"],
@@ -188,8 +189,9 @@ exc1_exc2_conn = FactoredDelayedConnection(
     dmin = torch.min(d).int(),
     dmax = torch.max(d).int(),
     alpha=alpha,
-    tc_trace_delay = 20.0,
-    tc_trace=20.0,
+    alpha_delay=alpha_delay,
+    tc_trace_delay = 5.0,
+    tc_trace=5.0,
     )
 exc1_exc2_conn.update_rule.x_tar = x_tar  # PARAMETER
 
@@ -206,6 +208,11 @@ network.add_layer(inh_layer_L2, name= "Inhibitory2")
 network.add_connection(exc1_exc2_conn, source="Excitatory", target="Excitatory2")
 network.add_connection(exc_inh_conn_L2, source="Excitatory2", target="Inhibitory2")
 network.add_connection(inh_exc_conn_L2, source="Inhibitory2", target="Excitatory2")
+
+#turn off learning in first layer
+network.connections[("Input", "Excitatory")].train(False)
+network.connections[("Input", "Excitatory")].nu = None
+network.connections[("Input", "Excitatory")].update_rule.nu = None
 
 if gpu:
     network.cuda(device="cuda")

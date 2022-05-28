@@ -18,7 +18,7 @@ from bindsnet.learning import PostPre, WeightDependentPostPre, LearningRule
 from bindsnet.network import Network
 from bindsnet.network.nodes import Input, LIFNodes, DiehlAndCookNodes, AdaptiveLIFNodes, Nodes
 from bindsnet.network.topology import Connection, LocalConnection, AbstractConnection, Conv2dConnection
-from custom_modules_tales import FactoredDelayedConnection, DiehlAndCookNodesContinual, DiehlCookDelayedSTDP
+from custom_modules_tales import FactoredDelayedConnection, DiehlAndCookNodesContinual, DiehlCookDelayedSTDP, PostPreDelayed
 
 
 class FactoredConnection(Connection):
@@ -164,7 +164,7 @@ class SpikingNetwork(Network):
             exc: float = 22.5,
             inh: float = 17.5,
             dt: float = 1.0,
-            nu: Optional[float] = 5e-2,
+            nu: Optional[float] = [5e-2, 5e-2],
             x_tar: float = 0.4,
             reduction: Optional[callable] = None,
             wmin: float = 0.0,
@@ -185,8 +185,8 @@ class SpikingNetwork(Network):
             delayed: bool = False,
             dmin: int = 0,
             dmax: int = 200,
-            tc_trace_delay = 20.0,
-            tc_trace = 20.0,
+            tc_trace_delay = 5.0,
+            tc_trace = 5.0,
     ) -> None:
         # language=rst
         """
@@ -243,26 +243,39 @@ class SpikingNetwork(Network):
 
         # Layers
         input_layer = Input(
-            n=self.n_inpt, shape=self.inpt_shape, traces=True, tc_trace=20.0
+            n=self.n_inpt, shape=self.inpt_shape, traces=True, tc_trace=tc_trace, traces_additive=False,
         )
         # FUTURE WORK: The time constant of the pre-synaptic trace has deeper implications than the membrane potential one. We started exploring it but couldn't get conclusive results due to some bugs in the code.
 
         # FUTURE WORK: These are basically modified ALIF nodes(without turning the threshold adaptation of after learning). Exploring other neuron models is a possible line of work.
+        # exc_layer = DiehlAndCookNodesContinual(
+        #     n=self.n_neurons,  # PARAMETER
+        #     traces=True, #has to be true to make recurrent connections
+        #     rest=-65.0,
+        #     reset=-60.0,
+        #     thresh=thresh,  # PARAMETER
+        #     refrac=5,
+        #     tc_decay=tc_decay,  # PARAMETER
+        #     tc_trace=tc_trace,
+        #     tc_trace_delay = tc_trace_delay,
+        #     theta_plus=theta_plus,  # PARAMETER
+        #     tc_theta_decay=tc_theta_decay,
+        # )
+
+        #TRY USING LIF NODES
         exc_layer = DiehlAndCookNodesContinual(
             n=self.n_neurons,  # PARAMETER
             traces=True, #has to be true to make recurrent connections
+            traces_additive=False,
             rest=-65.0,
             reset=-60.0,
             thresh=thresh,  # PARAMETER
             refrac=5,
             tc_decay=tc_decay,  # PARAMETER
             tc_trace=tc_trace,
-            tc_trace_delay = tc_trace_delay,
-            theta_plus=theta_plus,  # PARAMETER
-            tc_theta_decay=tc_theta_decay,
         )
         inh_layer = LIFNodes(n=self.n_neurons, traces=False, rest=-60.0, reset=-45.0, thresh=-40.0, tc_decay=10.0,
-                             refrac=2, tc_trace=20.0)
+                             refrac=2, tc_trace=tc_trace)
 
         # Connections
         w = winit * torch.rand(self.n_inpt, self.n_neurons)
@@ -279,16 +292,17 @@ class SpikingNetwork(Network):
             d = torch.randint(low=dmin, high=dmax, size=(self.n_inpt, self.n_neurons))
 
             #start with 0 delays
-            #d = torch.zeros_like(w)
+            #d = torch.zeros_like(w)s
 
             #time constant for trace decays
-            alpha = np.exp(- self.dt / tc_decay)
+            alpha = np.exp(- self.dt / tc_trace)
+            alpha_delay = np.exp(- self.dt/ tc_trace_delay)
 
             input_exc_conn = FactoredDelayedConnection(
                 source=input_layer,
                 target=exc_layer,
                 w=w,
-                update_rule=DiehlCookDelayedSTDP,  # FUTURE WORK: Other learning rules could also be explored.
+                update_rule=PostPreDelayed,  # FUTURE WORK: Other learning rules could also be explored.
                 nu=nu,
                 reduction=reduction,
                 wmin=wmin,
@@ -299,6 +313,7 @@ class SpikingNetwork(Network):
                 dmin = torch.min(d).int(),
                 dmax = torch.max(d).int(),
                 alpha=alpha,
+                alpha_delay = alpha_delay,
                 tc_trace_delay = tc_trace_delay,
                 tc_trace=tc_trace,
             )
@@ -308,7 +323,7 @@ class SpikingNetwork(Network):
                 source=input_layer,
                 target=exc_layer,
                 w=w,
-                update_rule=DiehlCookSTDP,  # FUTURE WORK: Other learning rules could also be explored.
+                update_rule=PostPre,  # FUTURE WORK: Other learning rules could also be explored.
                 nu=nu,
                 reduction=reduction,
                 wmin=wmin,
@@ -407,7 +422,7 @@ def plot_confusion_matrix(
     if save is not None:
         plt.ioff()
 
-        cm = confusion_matrix(correct, predicted, normalize=None)
+        cm = confusion_matrix(correct, predicted, normalize="true")
         disp = ConfusionMatrixDisplay(confusion_matrix=cm)
         disp.plot(include_values=True, cmap='viridis', xticks_rotation='horizontal', values_format=None,
                   colorbar=True)
@@ -416,7 +431,7 @@ def plot_confusion_matrix(
         plt.close()
         plt.ion()
     else:
-        cm = confusion_matrix(correct, predicted, normalize=None)
+        cm = confusion_matrix(correct, predicted, normalize="true")
         disp = ConfusionMatrixDisplay(confusion_matrix=cm)
         disp.plot(include_values=True, cmap='viridis', xticks_rotation='horizontal', values_format=None,
                   colorbar=True)

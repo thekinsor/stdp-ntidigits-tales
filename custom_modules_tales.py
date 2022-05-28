@@ -220,9 +220,9 @@ class FactoredDelayedConnection(Connection):
             reduction: Optional[callable] = None,
             weight_decay: float = 0.0,
             weight_factor: float = 1.0,
-            alpha: float = 1/20.,
-            alpha_delay: float = 1/200.,
-            tc_trace_delay = 200.0,
+            alpha: float = np.exp(-1/20.),
+            alpha_delay: float = np.exp(-1/5.),
+            tc_trace_delay = 5.0,
             tc_trace = 20.0,
             **kwargs
     ) -> None:
@@ -330,7 +330,7 @@ class FactoredDelayedConnection(Connection):
 
         #save the new presynaptic trace (capped trace)
         self.xpre.add_(current_spikes.float())
-        self.xpre_capped = Parameter(self.xpre.clamp(min=0.,max=1.), requires_grad=False)
+        self.xpre_capped.masked_fill_(current_spikes.bool(), 1)
         
         #decrease stored spikes counter
         self.delayed_spikes.sub_(1)
@@ -418,7 +418,8 @@ class DiehlCookDelayedSTDP(LearningRule):
         """
         batch_size = self.source.batch_size
 
-        source_x = self.connection.xpre #self.source.x.view(batch_size, -1).unsqueeze(2)
+        #use capped trace
+        source_x = self.connection.xpre_capped #self.source.x.view(batch_size, -1).unsqueeze(2)
 
         target_s = self.target.s.view(batch_size, -1).unsqueeze(1).float()
 
@@ -523,5 +524,78 @@ class DiehlCookDelayedSTDP(LearningRule):
 
         #print(self.connection.d)
 
+
+        super().update()
+
+class PostPreDelayed(LearningRule):
+    # language=rst
+    """
+    Simple delayed STDP rule involving both pre- and post-synaptic spiking activity. By default,
+    pre-synaptic update is negative and the post-synaptic update is positive.
+    """
+
+    def __init__(
+        self,
+        connection: AbstractConnection,
+        nu: Optional[Union[float, Sequence[float]]] = None,
+        reduction: Optional[callable] = None,
+        weight_decay: float = 0.0,
+        **kwargs
+    ) -> None:
+        # language=rst
+        """
+        Constructor for ``PostPre`` learning rule.
+
+        :param connection: An ``AbstractConnection`` object whose weights the
+            ``PostPre`` learning rule will modify.
+        :param nu: Single or pair of learning rates for pre- and post-synaptic events.
+        :param reduction: Method for reducing parameter updates along the batch
+            dimension.
+        :param weight_decay: Constant multiple to decay weights by on each iteration.
+        """
+        super().__init__(
+            connection=connection,
+            nu=nu,
+            reduction=reduction,
+            weight_decay=weight_decay,
+            **kwargs
+        )
+
+        assert (
+            self.source.traces and self.target.traces
+        ), "Both pre- and post-synaptic nodes must record spike traces."
+
+        if isinstance(connection, (Connection, LocalConnection)):
+            self.update = self._connection_update
+        elif isinstance(connection, Conv2dConnection):
+            self.update = self._conv2d_connection_update
+        else:
+            raise NotImplementedError(
+                "This learning rule is not supported for this Connection type."
+            )
+
+    def _connection_update(self, **kwargs) -> None:
+        # language=rst
+        """
+        Post-pre learning rule for ``Connection`` subclass of ``AbstractConnection``
+        class.
+        """
+        batch_size = self.source.batch_size
+
+        # Pre-synaptic update.
+        if self.nu[0]:
+            source_s = self.source.s.view(batch_size, -1).unsqueeze(2).float()
+            target_x = self.target.x.view(batch_size, -1).unsqueeze(1) * self.nu[0]
+            self.connection.w -= self.reduction(torch.bmm(source_s, target_x), dim=0)
+            del source_s, target_x
+
+        # Post-synaptic update.
+        if self.nu[1]:
+            target_s = (
+                self.target.s.view(batch_size, -1).unsqueeze(1).float() * self.nu[1]
+            )
+            source_x = self.connection.xpre_capped
+            self.connection.w += self.reduction(source_x*target_s, dim=0)
+            del source_x, target_s
 
         super().update()

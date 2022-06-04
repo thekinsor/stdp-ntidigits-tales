@@ -164,7 +164,7 @@ class SpikingNetwork(Network):
             exc: float = 22.5,
             inh: float = 17.5,
             dt: float = 1.0,
-            nu: Optional[float] = [5e-2, 5e-2],
+            nu: Optional[float] = [1e-2, 5e-2],
             x_tar: float = 0.4,
             reduction: Optional[callable] = None,
             wmin: float = 0.0,

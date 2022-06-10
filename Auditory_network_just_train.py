@@ -38,6 +38,7 @@ parser.add_argument("--tc_trace", type=float, default=20.0, help='Time constant 
 parser.add_argument("--tc_trace_delay", type=float, default=5.0, help='Time constant for capped trace decay.')
 # Network parameters
 parser.add_argument("--n_neurons", type=int, default=100, help='Number of neurons in the excitatory layer.')
+parser.add_argument("--wmin", type=float, default=0.0, help='Minimum allowed weights.')
 parser.add_argument("--exc", type=float, default=22.5, help='Strength of excitatory synapses.')
 parser.add_argument("--inh", type=float, default=17.5, help='Strength of inhibitory synapses.')
 parser.add_argument("--theta_plus", type=float, default=0.2, help='Step increase for the adaptive threshold.')
@@ -88,6 +89,7 @@ recurrency = args.recurrency
 delayed = args.delayed
 tc_trace = args.tc_trace
 tc_trace_delay = args.tc_trace_delay
+wmin = args.wmin
 
 # Create directories
 directories = ["results", "results/" + filename, "results/" + filename + "/weights_images", "results/" + filename + "/assignment_images/"]
@@ -138,7 +140,7 @@ pattern_repetition_counter = 0
 network = SpikingNetwork(n_neurons=n_neurons, inpt_shape=(1, data_dim), n_inpt=data_dim, dt=dt,
                          thresh=thresh, tc_decay=tc_decay, theta_plus=theta_plus, x_tar=x_tar,
                          weight_factor=1.0, exc=exc, inh=inh, som=som, start_inhib=-5.0, max_inhib=-17.5,
-                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace, tc_trace_delay=tc_trace_delay)
+                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace, tc_trace_delay=tc_trace_delay, wmin=wmin)
 if gpu:
     network.cuda(device="cuda")
 print(summary(network))
@@ -365,7 +367,7 @@ for epoch in range(n_epochs):
 
             square_assignments = get_square_assignments(assignments, n_neurons_sqrt)
             plot_weights(square_weights, im=weights_im,
-                         save=f'./results/{filename}/weights_images/weights_{filename}_{step}_epoch_{epoch}.png')
+                         save=f'./results/{filename}/weights_images/weights_{filename}_{step}_epoch_{epoch}.png', wmin=wmin)
             plot_assignments(square_assignments, im=assigns_im, save=f'./results/{filename}/assignment_images/assignments'
                                                                      f'_{filename}_{step}_epoch_{epoch}.png')
             plot_performance(accuracy, x_scale=update_interval, ax=perf_ax,

@@ -345,7 +345,7 @@ for epoch in range(n_epochs):
             #save the label_profiles at 10% steps
             label_profiles_diff_times[percent_counter] += label_profiles_during_train
 
-            torch.save(label_profiles_during_train, f'results/{filename}/label_profiles/profiles_at_{(percent_counter + 1)*10}%.pt')
+            torch.save(label_profiles_during_train, f'results/{filename}/label_profiles/profiles_at_{percent_counter*10}%.pt')
 
             # Assign labels to excitatory layer neurons
             assignments, proportions, rates = assign_labels(
@@ -354,8 +354,8 @@ for epoch in range(n_epochs):
                 n_labels=n_classes,
                 rates=rates,
             )
-            torch.save(assignments, f'results/{filename}/neuron_eval/assignments_at_{(percent_counter + 1)*10}%.pt')
-            torch.save(proportions, f'results/{filename}/neuron_eval/proportions_at_{(percent_counter + 1)*10}%.pt')
+            torch.save(assignments, f'results/{filename}/neuron_eval/assignments_at_{percent_counter*10}%.pt')
+            torch.save(proportions, f'results/{filename}/neuron_eval/proportions_at_{percent_counter*10}%.pt')
 
             # save assignments and proportions at 10% steps
             assignments_diff_times[percent_counter] = assignments

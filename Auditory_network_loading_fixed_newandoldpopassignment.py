@@ -46,6 +46,8 @@ parser.add_argument("--theta_plus", type=float, default=0.2, help='Step increase
 parser.add_argument("--som", dest="som", action="store_true", help='Enable for topological self-organisation.')
 parser.add_argument("--recurrency", dest="recurrency", action="store_true", help='Enable for simple excitatory recurrent connections.')
 parser.add_argument("--delayed", dest="delayed", action="store_true", help='Enable for delayed connections.')
+parser.add_argument("--dlearning", dest="dlearning", action="store_true", help='Enable for learning delayed connections.')
+parser.add_argument("--capped", dest="capped", action="store_true", help='Use capped traces for learning.')
 # Data parameters
 parser.add_argument("--n_test", type=int, default=None, help='Number of samples for the testing set (if None, '
                                                              'all are used)')
@@ -64,7 +66,7 @@ parser.add_argument("--plot", dest="plot", action="store_true", help='Enable plo
 parser.add_argument("--gpu", dest="gpu", action="store_true", help='Enable GPU acceleration.')
 parser.add_argument("--modelname", type=str, default='0_200_400n_nodlearning_norep_fullset_4_epochs', help='Name of old pretrained net to load.')
 # Defaults
-parser.set_defaults(plot=False, gpu=False, som=False, recurrency=False, delayed=False)
+parser.set_defaults(plot=False, gpu=False, som=False, recurrency=False, delayed=False, capped = False, dlearning=False)
 
 args = parser.parse_args()
 
@@ -93,6 +95,8 @@ tc_trace = args.tc_trace
 tc_trace_delay = args.tc_trace_delay
 modelname = args.modelname
 wmin = args.wmin
+capped = args.capped
+dlearning = args.dlearning
 
 # Create directories
 directories = ["results", "results/" + filename,
@@ -147,7 +151,8 @@ pattern_repetition_counter = 0
 network = SpikingNetwork(n_neurons=n_neurons, inpt_shape=(1, data_dim), n_inpt=data_dim, dt=dt,
                          thresh=thresh, tc_decay=tc_decay, theta_plus=theta_plus, x_tar=x_tar,
                          weight_factor=1.0, exc=exc, inh=inh, som=som, start_inhib=-5.0, max_inhib=-17.5,
-                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace, tc_trace_delay=tc_trace_delay, wmin=wmin)
+                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace, tc_trace_delay=tc_trace_delay, wmin=wmin,
+                         capped=capped, dlearning=dlearning)
 
 network_correct_data = torch.load("results/" + str(filename) +"/model_" + str(modelname) + ".pt")
 network.load_state_dict(network_correct_data.state_dict())
@@ -510,7 +515,7 @@ testing_diff_abs_label_tensor = torch.zeros(n_test, dtype=torch.int64, device=de
 
 testing_thresh_pred = torch.zeros((10, n_test), dtype=torch.int64, device=device)
 
-torch.save(label_profiles_during_train, f'results/{filename}/label_profiles/final_profiles.pt')
+torch.save(label_profiles, f'results/{filename}/label_profiles/final_profiles.pt')
 torch.save(assignments, f'results/{filename}/neuron_eval/final_assignments_at_{percent_counter*10}%.pt')
 torch.save(proportions, f'results/{filename}/neuron_eval/final_proportions_at_{percent_counter*10}%.pt')
 
@@ -606,25 +611,25 @@ for step, batch in enumerate(test_dataset):
     )
 
     # Get network predictions for avg-diff
-    pop_activity_pred = pop_avg_prediction(
+    pop_avg_activity_pred = pop_avg_prediction(
         spikes=spike_record, label_profiles=avg_out_label_profiles, n_labels=n_classes, avg_activity=avg_activity_per_neuron
     )
 
     # Compute network accuracy according to available classification strategies
-    accuracy["avg-diff"] += float(torch.sum(label_tensor.long() == pop_activity_pred).item())
+    accuracy["avg-diff"] += float(torch.sum(label_tensor.long() == pop_avg_activity_pred).item())
 
-    testing_avg_diff_pred[step] = pop_activity_pred
+    testing_avg_diff_pred[step] = pop_avg_activity_pred
     testing_avg_diff_label_tensor[step] = label_tensor
 
     # Get network predictions for diff-abs
-    pop_activity_pred = pop_diff_prediction(
+    pop_diff_pred = pop_diff_prediction(
         spikes=spike_record, label_profiles=label_profiles, n_labels=n_classes,
     )
 
     # Compute network accuracy according to available classification strategies
-    accuracy["diff-abs"] += float(torch.sum(label_tensor.long() == pop_activity_pred).item())
+    accuracy["diff-abs"] += float(torch.sum(label_tensor.long() == pop_diff_pred).item())
 
-    testing_diff_abs_pred[step] = pop_activity_pred
+    testing_diff_abs_pred[step] = pop_diff_pred
     testing_diff_abs_label_tensor[step] = label_tensor
 
     # Compute network accuracy according to available classification strategies

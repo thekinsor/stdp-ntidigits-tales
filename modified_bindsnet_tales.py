@@ -185,8 +185,10 @@ class SpikingNetwork(Network):
             delayed: bool = False,
             dmin: int = 0,
             dmax: int = 200,
-            tc_trace_delay = 5.0,
-            tc_trace = 5.0,
+            tc_trace_delay: float = 5.0,
+            tc_trace: float = 5.0,
+            capped: bool = False,
+            dlearning: bool = False,
     ) -> None:
         # language=rst
         """
@@ -241,9 +243,13 @@ class SpikingNetwork(Network):
         self.dmax = dmax
         self.tc_trace_delay = tc_trace_delay
 
+        traces_additive = True
+
+        if capped: traces_additive = False
+
         # Layers
         input_layer = Input(
-            n=self.n_inpt, shape=self.inpt_shape, traces=True, tc_trace=tc_trace, traces_additive=False,
+            n=self.n_inpt, shape=self.inpt_shape, traces=True, tc_trace=tc_trace, traces_additive=traces_additive,
         )
         # FUTURE WORK: The time constant of the pre-synaptic trace has deeper implications than the membrane potential one. We started exploring it but couldn't get conclusive results due to some bugs in the code.
 
@@ -302,7 +308,7 @@ class SpikingNetwork(Network):
                 source=input_layer,
                 target=exc_layer,
                 w=w,
-                update_rule=PostPreDelayed,  # FUTURE WORK: Other learning rules could also be explored.
+                update_rule=DiehlCookDelayedSTDP,  # FUTURE WORK: Other learning rules could also be explored.
                 nu=nu,
                 reduction=reduction,
                 wmin=wmin,
@@ -316,6 +322,8 @@ class SpikingNetwork(Network):
                 alpha_delay = alpha_delay,
                 tc_trace_delay = tc_trace_delay,
                 tc_trace=tc_trace,
+                capped = capped,
+                dlearning=dlearning,
             )
             input_exc_conn.update_rule.x_tar = x_tar  # PARAMETER
         else:
@@ -323,7 +331,7 @@ class SpikingNetwork(Network):
                 source=input_layer,
                 target=exc_layer,
                 w=w,
-                update_rule=PostPre,  # FUTURE WORK: Other learning rules could also be explored.
+                update_rule=DiehlCookSTDP,  # FUTURE WORK: Other learning rules could also be explored.
                 nu=nu,
                 reduction=reduction,
                 wmin=wmin,
@@ -358,6 +366,7 @@ class SpikingNetwork(Network):
                     dmin = torch.min(d).int(),
                     dmax = torch.max(d).int(),
                     alpha=alpha,
+                    capped = capped,
                 )
                 input_exc_conn.update_rule.x_tar = x_tar  # PARAMETER
             else:

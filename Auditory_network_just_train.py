@@ -45,6 +45,8 @@ parser.add_argument("--theta_plus", type=float, default=0.2, help='Step increase
 parser.add_argument("--som", dest="som", action="store_true", help='Enable for topological self-organisation.')
 parser.add_argument("--recurrency", dest="recurrency", action="store_true", help='Enable for simple excitatory recurrent connections.')
 parser.add_argument("--delayed", dest="delayed", action="store_true", help='Enable for delayed connections.')
+parser.add_argument("--dlearning", dest="dlearning", action="store_true", help='Enable for learning delayed connections.')
+parser.add_argument("--capped", dest="capped", action="store_true", help='Use capped traces for learning.')
 # Data parameters
 parser.add_argument("--n_test", type=int, default=None, help='Number of samples for the testing set (if None, '
                                                              'all are used)')
@@ -62,7 +64,7 @@ parser.add_argument("--plot", dest="plot", action="store_true", help='Enable plo
                                                                      'simulation).')
 parser.add_argument("--gpu", dest="gpu", action="store_true", help='Enable GPU acceleration.')
 # Defaults
-parser.set_defaults(plot=False, gpu=False, som=False, recurrency=False, delayed=False)
+parser.set_defaults(plot=False, gpu=False, som=False, recurrency=False, delayed=False, capped=False, dlearning=False)
 
 args = parser.parse_args()
 
@@ -90,6 +92,8 @@ delayed = args.delayed
 tc_trace = args.tc_trace
 tc_trace_delay = args.tc_trace_delay
 wmin = args.wmin
+capped = args.capped
+dlearning = args.dlearning
 
 # Create directories
 directories = ["results", "results/" + filename, "results/" + filename + "/weights_images", "results/" + filename + "/assignment_images/"]
@@ -140,7 +144,8 @@ pattern_repetition_counter = 0
 network = SpikingNetwork(n_neurons=n_neurons, inpt_shape=(1, data_dim), n_inpt=data_dim, dt=dt,
                          thresh=thresh, tc_decay=tc_decay, theta_plus=theta_plus, x_tar=x_tar,
                          weight_factor=1.0, exc=exc, inh=inh, som=som, start_inhib=-5.0, max_inhib=-17.5,
-                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace, tc_trace_delay=tc_trace_delay, wmin=wmin)
+                         recurrency=recurrency, delayed=delayed, tc_trace=tc_trace, tc_trace_delay=tc_trace_delay, wmin=wmin,
+                         capped=capped, dlearning=dlearning)
 if gpu:
     network.cuda(device="cuda")
 print(summary(network))

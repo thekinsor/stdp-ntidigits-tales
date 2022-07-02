@@ -221,9 +221,10 @@ class FactoredDelayedConnection(Connection):
             weight_decay: float = 0.0,
             weight_factor: float = 1.0,
             alpha: float = np.exp(-1/20.),
-            alpha_delay: float = np.exp(-1/5.),
-            tc_trace_delay = 5.0,
-            tc_trace = 20.0,
+            alpha_delay: float = np.exp(-1/20.),
+            tc_trace_delay: float = 20.0,
+            tc_trace: float = 20.0,
+            dlearning: bool = False,
             **kwargs
     ) -> None:
         # language=rst
@@ -260,12 +261,16 @@ class FactoredDelayedConnection(Connection):
         self.d = kwargs.get('d', torch.zeros_like(self.w))
         self.dmin = kwargs.get('dmin', None)
         self.dmax = kwargs.get('dmax', None)
+        self.capped = kwargs.get('capped', False)
 
         #trace decay value (for now equal for integrative and capped)
         self.alpha = alpha
         self.alpha_delay = alpha_delay
         self.tc_trace = tc_trace
         self.tc_trace_delay = tc_trace_delay
+        self.dlearning = dlearning
+
+        #print(dlearning)
 
         assert self.d is not None, "Delays have to be set for Delayed connections"
         assert self.dmax is not None or self.dmin is not None, "Delay constraints have to be set"
@@ -356,6 +361,7 @@ class FactoredDelayedConnection(Connection):
         super().reset_state_variables
 
         self.xpre *= 0
+        self.xpre_capped *= 0
         self.delayed_spikes *= 0
 
 class DiehlCookDelayedSTDP(LearningRule):
@@ -418,14 +424,16 @@ class DiehlCookDelayedSTDP(LearningRule):
         """
         batch_size = self.source.batch_size
 
-        #use capped trace
-        source_x = self.connection.xpre_capped #self.source.x.view(batch_size, -1).unsqueeze(2)
+        source_x = torch.zeros_like(self.connection.xpre)
+
+        #use intended trace
+        if self.connection.capped: source_x = self.connection.xpre_capped
+        else: source_x = self.connection.xpre
 
         target_s = self.target.s.view(batch_size, -1).unsqueeze(1).float()
 
         update = 0
-        decrease_delay_update = 0
-        increase_delay_update = 0
+        update_steps = 0
 
         # Post-synaptic update.
         if self.nu is not None:
@@ -433,76 +441,84 @@ class DiehlCookDelayedSTDP(LearningRule):
                                                        torch.zeros_like(source_x)), dim=0)
             update += self.nu[1] * outer_product * torch.pow((self.wmax - self.connection.w), 0.2)
         
-        if(False):
+            if(self.connection.dlearning):
 
-            #capped traces
-            source_x_capped = self.connection.xpre_capped
+                #capped traces
+                source_x_capped = self.connection.xpre_capped
 
 
-            target_x_capped = torch.ones_like(source_x_capped)
+                target_x_capped = torch.ones_like(source_x_capped)
 
-            if(self.connection.target.traces_additive): target_x_capped *= self.connection.target.x.clamp(min=0.,max=1.)
-            else: target_x_capped *= self.connection.target.x
+                if(self.connection.target.traces_additive): target_x_capped *= self.connection.target.x.clamp(min=0.,max=1.)
+                else: target_x_capped *= self.connection.target.x
 
-            #print("Target x capped: " + str(target_x_capped.sum()))
+                #print("Target x capped: " + str(target_x_capped.sum()))
 
-            #-dt/tc_trace
-            #source_alpha_ln = -self.connection.source.dt/self.connection.tc_trace_delay
-            #target_alpha_ln = -self.connection.target.dt/self.connection.target.tc_trace_delay
+                #-dt/tc_trace
+                #source_alpha_ln = -self.connection.source.dt/self.connection.tc_trace_delay
+                #target_alpha_ln = -self.connection.target.dt/self.connection.target.tc_trace_delay
 
-            #source_alpha = self.connection.alpha_delay
-            #target_alpha = self.connection.target.trace_decay_delay
+                #source_alpha = self.connection.alpha_delay
+                #target_alpha = self.connection.target.trace_decay_delay
 
-            #delay updates correct post and pre
-            #decrease_delay_update = torch.where((source_x_capped > source_alpha) & (target_x_capped > 0) & (target_x_capped <= target_alpha),
-            #                             torch.round(torch.log(target_x_capped)/target_alpha_ln), torch.zeros_like(target_x_capped))
+                #delay updates correct post and pre
+                #decrease_delay_update = torch.where((source_x_capped > source_alpha) & (target_x_capped > 0) & (target_x_capped <= target_alpha),
+                #                             torch.round(torch.log(target_x_capped)/target_alpha_ln), torch.zeros_like(target_x_capped))
 
-            #increase_delay_update = torch.where((target_x_capped > target_alpha) & (source_x_capped > 0) & (source_x_capped <= 1),
-            #                             torch.round(torch.log(source_x_capped)/source_alpha_ln), torch.zeros_like(source_x_capped))
+                #increase_delay_update = torch.where((target_x_capped > target_alpha) & (source_x_capped > 0) & (source_x_capped <= 1),
+                #                             torch.round(torch.log(source_x_capped)/source_alpha_ln), torch.zeros_like(source_x_capped))
+
+                # print("DEcreases: " + str(((source_x_capped > source_alpha).sum())))# & (target_x_capped > 0) & (target_x_capped <= target_alpha)).sum()))
+                # print("Increases: " + str(((target_x_capped.max()))) + str(((target_x_capped > target_alpha) & (source_x_capped > 0) & (source_x_capped <= 1)).sum()))
+                # print("\n")
+
+                # #some factors to try out TODO
+                #delay_lr = float(0.01)
+                #homeostasis_factor = float(1/2.0)
+                #sigmoid_factor = float(5.0)
+                delay_pre_tar = float(0.8)
+                #delay_post_tar = float(-0.8)
+
+                # #delay update soft (if matched spikes, no update, if too early delay, else deacrease)
+                # steps = delay_steps*torch.where((source_x > 0.) & (source_x < 1.), torch.ceil((1 - source_x)), source_x - 1)
+
+                #simple rule, if pre trace bigger than certain value, maybe another one can still come after to build a burst so add some delay
+                #if trace already decayed more than a certain value, go back to learn the burst
+                #if there was no pre spike for the out spike then up the delay to, maybe later there is a correspondence to learn still
+                update_value = torch.ones_like(self.connection.d)
+                update_steps = torch.where((source_x_capped > delay_pre_tar) | (source_x_capped == 0), -update_value, update_value)
+                update_steps = self.reduction(torch.where((target_s.bool()) & (source_x_capped < delay_pre_tar),
+                                                            update_steps, torch.zeros_like(update_steps)), dim=0)
+
+                # #delay update hard (if matched spikes, no update, if too early delay, else deacrease)
+                # #steps = torch.where((source_x > 0.) & (source_x < 1.), np.log(1./self.connection.alpha)*torch.log(source_x), delay_steps*(source_x - 1))
+
+                #demyelinization = homeostasis_factor*torch.ones_like(source_x_capped)
+
+                #delay update soft (if they fire together input fires even a bit earlier)
+                #steps = delay_lr*self.connection.dmax *torch.where(source_x_capped > delay_x_tar, torch.exp(-source_x_capped), demyelinization)
+
+                #post pre approach
+                #first calculate difference between xpost and xpre * sigmoid factor and whereever they are over the targets record the sigmoids
+                #xdiff = sigmoid_factor*(target_x_capped - source_x_capped)
+                #delay_update = delay_lr*self.connection.dmax*torch.where((xdiff >= delay_post_tar) & (xdiff <= delay_pre_tar),
+                #                                                                        torch.sigmoid(xdiff), demyelinization)
             
-            # print("DEcreases: " + str(((source_x_capped > source_alpha).sum())))# & (target_x_capped > 0) & (target_x_capped <= target_alpha)).sum()))
-            # print("Increases: " + str(((target_x_capped.max()))) + str(((target_x_capped > target_alpha) & (source_x_capped > 0) & (source_x_capped <= 1)).sum()))
-            # print("\n")
 
-            # #some factors to try out TODO
-            delay_lr = float(0.01)
-            homeostasis_factor = float(1/2.0)
-            sigmoid_factor = float(5.0)
-            delay_pre_tar = float(0.4)
-            delay_post_tar = float(-0.8)
+                #delay_update = delay_lr*self.connection.dmax*self.reduction(torch.where((target_s.bool()),
+                #                                                -torch.exp(-source_x_capped), demyelinization), dim=0)
 
-            # #delay update soft (if matched spikes, no update, if too early delay, else deacrease)
-            # steps = delay_steps*torch.where((source_x > 0.) & (source_x < 1.), torch.ceil((1 - source_x)), source_x - 1)
+                #print(((target_s.bool()) & (source_x_capped > delay_x_tar)).sum())
 
-            # #delay update hard (if matched spikes, no update, if too early delay, else deacrease)
-            # #steps = torch.where((source_x > 0.) & (source_x < 1.), np.log(1./self.connection.alpha)*torch.log(source_x), delay_steps*(source_x - 1))
+                #add some homeostatic normalization and demyelinization
+                #delay_update /= delay_update.sum(dim=0)
+                #delay_update *= delay_lr*(self.connection.dmax - self.connection.dmin)
+                #delay_update.add_(homeostasis_steps*self.connection.dmax)
 
-            demyelinization = homeostasis_factor*torch.ones_like(source_x_capped)
+                #print(steps)
 
-            #delay update soft (if they fire together input fires even a bit earlier)
-            #steps = delay_lr*self.connection.dmax *torch.where(source_x_capped > delay_x_tar, torch.exp(-source_x_capped), demyelinization)
-
-            #post pre approach
-            #first calculate difference between xpost and xpre * sigmoid factor and whereever they are over the targets record the sigmoids
-            xdiff = sigmoid_factor*(target_x_capped - source_x_capped)
-            delay_update = delay_lr*self.connection.dmax*torch.where((xdiff >= delay_post_tar) & (xdiff <= delay_pre_tar),
-                                                                                    torch.sigmoid(xdiff), demyelinization)
-            
-
-            #delay_update = delay_lr*self.connection.dmax*self.reduction(torch.where((target_s.bool()),
-            #                                                -torch.exp(-source_x_capped), demyelinization), dim=0)
-            
-            #print(((target_s.bool()) & (source_x_capped > delay_x_tar)).sum())
-
-            #add some homeostatic normalization and demyelinization
-            #delay_update /= delay_update.sum(dim=0)
-            #delay_update *= delay_lr*(self.connection.dmax - self.connection.dmin)
-            #delay_update.add_(homeostasis_steps*self.connection.dmax)
-
-            #print(steps)
-
-            delay_update.round()
-            #print(delay_update.sum())
+                #delay_update.round()
+                #print(delay_update.sum())
 
         self.connection.w += update
         #decrease_delay_update = torch.where(decrease_delay_update.int() <= self.connection.d,
@@ -510,8 +526,15 @@ class DiehlCookDelayedSTDP(LearningRule):
         # self.connection.d -= decrease_delay_update.int()
         # self.connection.d += increase_delay_update.int()
 
-        #save old delays
-        #old_delays = self.connection.d
+        if(self.connection.dlearning):
+            #save old delays
+            old_delays = self.connection.d
+
+            self.connection.d += update_steps.int()
+            self.connection.d.clamp_(min=self.connection.dmin + 1, max=self.connection.dmax + 1)
+
+            #update saved delays to not create errors of still propagating delayed spikes
+            self.connection.delayed_spikes.add_((self.connection.delayed_spikes // old_delays) * (old_delays - self.connection.d))
 
         #homeostasis rule includes decrease and increase in one
         #self.connection.d += delay_update.int()

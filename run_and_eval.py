@@ -7,7 +7,7 @@ import os
 
 #train the net
 
-trace = 200.0
+trace = 20.0
 
 tc_trace = trace
 tc_trace_delay = trace
@@ -20,9 +20,13 @@ n_epochs = 4
 wmin = None
 
 gpu = True
-delayed = False
+delayed = True
+capped = False
+dlearning = True
 
-filename = f'{int(trace)}ms_tc_trace_capped_no_delays'
+shutdown = True
+
+filename = f'{int(trace)}ms_tc_trace_integrative_with_delay_learning_dtar08_inverted_rdstpd_dlearning_but_decrease_at0trace'
 
 def create_command(
         file_to_run: str,
@@ -40,6 +44,10 @@ def create_command(
     if gpu: command.append("--gpu")
 
     if delayed: command.append("--delayed")
+
+    if capped: command.append("--capped")
+
+    if dlearning: command.append("--dlearning")
 
     command.append("--n_epochs")
     command.append(f'{n_epochs}')
@@ -72,82 +80,19 @@ def create_command(
 
     return str_command
 
-
-
 train_and_full_eval = ""
 
 train_and_full_eval += create_command("Auditory_network_just_train.py")
 train_and_full_eval += "; "
 
 n_epochs = 1
+dlearning = False
 
 train_and_full_eval += create_command("Auditory_network_loading_fixed_newandoldpopassignment.py", modelname=filename)
 
-subprocess.run(train_and_full_eval, shell=True)
-
-#run second time
-
-trace = 1000.0
-
-tc_trace = trace
-tc_trace_delay = trace
-n_epochs = 4
-
-filename = f'{int(trace)}ms_tc_trace_capped_no_delays'
-
-train_and_full_eval = ""
-
-train_and_full_eval += create_command("Auditory_network_just_train.py")
-train_and_full_eval += "; "
-
-n_epochs = 1
-
-train_and_full_eval += create_command("Auditory_network_loading_fixed_newandoldpopassignment.py", modelname=filename)
+#print(train_and_full_eval)
 
 subprocess.run(train_and_full_eval, shell=True)
 
-#run third time
 
-trace = 5.0
-
-tc_trace = trace
-tc_trace_delay = trace
-n_epochs = 4
-
-delayed = True
-
-filename = f'{int(trace)}ms_tc_trace_capped_with_delays'
-
-train_and_full_eval = ""
-
-train_and_full_eval += create_command("Auditory_network_just_train.py")
-train_and_full_eval += "; "
-
-n_epochs = 1
-
-train_and_full_eval += create_command("Auditory_network_loading_fixed_newandoldpopassignment.py", modelname=filename)
-
-subprocess.run(train_and_full_eval, shell=True)
-
-#run fourth time
-
-trace = 20.0
-
-tc_trace = trace
-tc_trace_delay = trace
-n_epochs = 4
-
-delayed = True
-
-filename = f'{int(trace)}ms_tc_trace_capped_with_delays'
-
-train_and_full_eval = ""
-
-train_and_full_eval += create_command("Auditory_network_just_train.py")
-train_and_full_eval += "; "
-
-n_epochs = 1
-
-train_and_full_eval += create_command("Auditory_network_loading_fixed_newandoldpopassignment.py", modelname=filename)
-
-subprocess.run(train_and_full_eval, shell=True)
+if(shutdown): subprocess.run("shutdown now", shell=True)

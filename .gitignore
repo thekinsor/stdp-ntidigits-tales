@@ -133,6 +133,7 @@ dmypy.json
 /data/
 .idea/
 /visualization on the go/
+/visualization on the go/backup 15-07 presdg/
 /visual_network_visualization_different_regimes.zip
 results (copy)/0_100_learning_d_hard/confusion_matrix_0_100_learning_d_hard.png
 results (copy)/0_100_learning_d_hard/cumulative_spikes_0_100_learning_d_hard.png

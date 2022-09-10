@@ -148,7 +148,7 @@ def assign_pop_labels(
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     # language=rst
     """
-    Assign labels to the neurons based on highest average spiking activity.
+    Create and average in activities for each label to create the population label profiles.
 
     :param spikes: Binary tensor of shape ``(n_samples, time, n_neurons)`` of a single
         layer's spiking activity.
@@ -192,3 +192,39 @@ def assign_pop_labels(
     # label_profiles[label_profiles != label_profiles] = 0  # Set NaNs to 0
 
     return label_profiles
+
+def build_activity_dataset(
+    spikes: torch.Tensor,
+    labels: torch.Tensor,
+    norm_activities: Optional[torch.Tensor] = None,
+    labelling: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    # language=rst
+    """
+    Assign labels to the neurons based on highest average spiking activity.
+
+    :param spikes: Binary tensor of shape ``(n_samples, time, n_neurons)`` of a single
+        layer's spiking activity.
+    :param labels: Vector of shape ``(n_samples,)`` with data labels corresponding to
+        spiking activity.
+    :param n_labels: The number of target labels in the data.
+    :param label_profiles: If passed, these represent spike label_profiles from a previous
+        ``assign_labels()`` call.
+    :param alpha: Rate of decay of label assignments.
+    :return: Tuple of class assignments, per-class spike proportions, and per-class
+        firing label_profiles.
+    """
+
+    # Sum over time dimension (spike ordering doesn't matter).
+    spikes = spikes.sum(1)
+
+    #normalize
+    spikes = torch.nn.functional.normalize(spikes, dim=1)
+
+    if norm_activities == None: norm_activities = spikes
+    else: norm_activities = torch.cat((norm_activities, spikes), 0)
+
+    if labelling == None: labelling = labels.unsqueeze(0)
+    else: labelling = torch.cat((labelling, labels.unsqueeze(0)),0)
+
+    return norm_activities, labelling

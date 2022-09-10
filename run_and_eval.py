@@ -2,10 +2,10 @@ import subprocess
 import os
 
 #
-# File for fast running of training and eval
+# Script for quickly and conveniently running several other training and eval scripts sequentially
 #
 
-#train the net
+#set parameters for the command arguments
 
 trace = 20.0
 
@@ -15,19 +15,22 @@ tc_trace_delay = trace
 n_neurons = 400
 inh = None
 
-n_epochs = 4
+n_epochs = 1
 
 wmin = None
 
 gpu = True
 delayed = True
 capped = False
-dlearning = True
+dlearning = False
+
+recurrency = False
 
 shutdown = True
 
-filename = f'{int(trace)}ms_tc_trace_integrative_with_delay_learning_dtar08_inverted_rdstpd_dlearning_but_decrease_at0trace'
+filename = f'{int(trace)}ms_tc_trace_integrative_with_delays'
 
+#create commandline command
 def create_command(
         file_to_run: str,
         modelname: str = None,
@@ -48,6 +51,8 @@ def create_command(
     if capped: command.append("--capped")
 
     if dlearning: command.append("--dlearning")
+
+    if recurrency: command.append("--recurrency")
 
     command.append("--n_epochs")
     command.append(f'{n_epochs}')
@@ -82,17 +87,28 @@ def create_command(
 
 train_and_full_eval = ""
 
-train_and_full_eval += create_command("Auditory_network_just_train.py")
-train_and_full_eval += "; "
+#two layer stuff
+n_neurons = 400
+delayed = True
+capped = True
+
+
+trace = 5.0
+
+tc_trace = trace
+tc_trace_delay = trace
+
+#construct the commands
+
+filename = "LIF_0_200_400n_nodlearning_capped_trace_5ms_tc"
 
 n_epochs = 1
-dlearning = False
 
-train_and_full_eval += create_command("Auditory_network_loading_fixed_newandoldpopassignment.py", modelname=filename)
+train_and_full_eval += create_command("Auditory_network_loading_sdg_classifier.py", modelname=filename)
 
-#print(train_and_full_eval)
+#if one wishes to shutdown after finishing
+if(shutdown): train_and_full_eval += "; shutdown now"
 
+#run it
 subprocess.run(train_and_full_eval, shell=True)
 
-
-if(shutdown): subprocess.run("shutdown now", shell=True)

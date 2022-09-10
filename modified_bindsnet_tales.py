@@ -1,3 +1,8 @@
+#FILE WITH THE MODIFIED SPIKING NEURAL NET, BASED ON JULIANS ORIGINAL CODE (modified_bindsnet.py) ADAPTED TO
+#RUN THE NETWORK WITH DELAYS AND RECURRENCIES
+#BY TALES BRAIG
+
+
 from typing import Optional, Union, Tuple, List, Sequence, Iterable, Type, Dict, Sized
 import numpy as np
 import torch
@@ -251,24 +256,7 @@ class SpikingNetwork(Network):
         input_layer = Input(
             n=self.n_inpt, shape=self.inpt_shape, traces=True, tc_trace=tc_trace, traces_additive=traces_additive,
         )
-        # FUTURE WORK: The time constant of the pre-synaptic trace has deeper implications than the membrane potential one. We started exploring it but couldn't get conclusive results due to some bugs in the code.
-
-        # FUTURE WORK: These are basically modified ALIF nodes(without turning the threshold adaptation of after learning). Exploring other neuron models is a possible line of work.
-        # exc_layer = DiehlAndCookNodesContinual(
-        #     n=self.n_neurons,  # PARAMETER
-        #     traces=True, #has to be true to make recurrent connections
-        #     rest=-65.0,
-        #     reset=-60.0,
-        #     thresh=thresh,  # PARAMETER
-        #     refrac=5,
-        #     tc_decay=tc_decay,  # PARAMETER
-        #     tc_trace=tc_trace,
-        #     tc_trace_delay = tc_trace_delay,
-        #     theta_plus=theta_plus,  # PARAMETER
-        #     tc_theta_decay=tc_theta_decay,
-        # )
-
-        #TRY USING LIF NODES
+        
         exc_layer = DiehlAndCookNodesContinual(
             n=self.n_neurons,  # PARAMETER
             traces=True, #has to be true to make recurrent connections
@@ -280,6 +268,18 @@ class SpikingNetwork(Network):
             tc_decay=tc_decay,  # PARAMETER
             tc_trace=tc_trace,
         )
+        #TRY USING LIF NODES
+        # exc_layer = LIFNodes(
+        #     n=self.n_neurons,  # PARAMETER
+        #     traces=True, #has to be true to make recurrent connections
+        #     traces_additive=False,
+        #     rest=-65.0,
+        #     reset=-60.0,
+        #     thresh=thresh,  # PARAMETER
+        #     refrac=5,
+        #     tc_decay=tc_decay,  # PARAMETER
+        #     tc_trace=tc_trace,
+        # )
         inh_layer = LIFNodes(n=self.n_neurons, traces=False, rest=-60.0, reset=-45.0, thresh=-40.0, tc_decay=10.0,
                              refrac=2, tc_trace=tc_trace)
 
@@ -297,10 +297,13 @@ class SpikingNetwork(Network):
             #random weights
             d = torch.randint(low=dmin, high=dmax, size=(self.n_inpt, self.n_neurons))
 
+            #load preprocessed "prototypes" from delta code
+            #d = torch.load("results/d_on_prototypes.pt")
+
             #start with 0 delays
             #d = torch.zeros_like(w)s
 
-            #time constant for trace decays
+            #decay factor for trace decays
             alpha = np.exp(- self.dt / tc_trace)
             alpha_delay = np.exp(- self.dt/ tc_trace_delay)
 
@@ -316,8 +319,8 @@ class SpikingNetwork(Network):
                 norm=norm,
                 weight_factor=weight_factor,  # PARAMETER
                 d=d,
-                dmin = torch.min(d).int(),
-                dmax = torch.max(d).int(),
+                dmin = dmin,
+                dmax = dmax,
                 alpha=alpha,
                 alpha_delay = alpha_delay,
                 tc_trace_delay = tc_trace_delay,
@@ -344,11 +347,11 @@ class SpikingNetwork(Network):
         w = self.exc * torch.diag(torch.ones(self.n_neurons))
         exc_inh_conn = Connection(source=exc_layer, target=inh_layer, w=w, wmin=0, wmax=self.exc)
 
-        #add a simple recurrency
+        #add a simple recurrency connection
         if self.recurrency:
             if(delayed):
                 #random weights
-                d = torch.randint(low=dmin, high=dmax, size=(self.n_neurons, self.n_neurons))
+                d = torch.randint(low=dmin, high=200, size=(self.n_neurons, self.n_neurons))
 
                 w = winit * torch.rand(self.n_neurons, self.n_neurons)
                 exc_exc_conn = FactoredDelayedConnection(
@@ -363,8 +366,8 @@ class SpikingNetwork(Network):
                     norm=norm,
                     weight_factor=weight_factor,  # PARAMETER
                     d=d,
-                    dmin = torch.min(d).int(),
-                    dmax = torch.max(d).int(),
+                    dmin = dmin,
+                    dmax = dmax,
                     alpha=alpha,
                     capped = capped,
                 )

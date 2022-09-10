@@ -1,3 +1,6 @@
+#FILE WITH MODIFIED/CUSTOM NODES, CONNECTIONS AND LEARNING RULES
+#BY TALES BRAIG
+
 from turtle import delay
 from typing import Optional, Union, Tuple, List, Sequence, Iterable, Type, Dict, Sized
 import numpy as np
@@ -14,12 +17,87 @@ import torch.nn as nn
 from torchvision import models
 from bindsnet.learning import PostPre, WeightDependentPostPre, LearningRule
 from bindsnet.network import Network
-from bindsnet.network.nodes import Input, LIFNodes, DiehlAndCookNodes, AdaptiveLIFNodes, Nodes
+from bindsnet.network.nodes import AbstractInput, Input, LIFNodes, DiehlAndCookNodes, AdaptiveLIFNodes, Nodes
 from bindsnet.network.topology import Connection, LocalConnection, AbstractConnection, Conv2dConnection
 
 
-#FILE WITH MODIFIED/CUSTOM NODES, CONNECTIONS AND LEARNING RULES
-#BY TALES BRAIG
+class DeltaNeurons(Nodes, AbstractInput):
+    # language=rst
+    """
+    Layer of nodes with user-specified spiking behavior.
+    """
+
+    def __init__(
+        self,
+        n: Optional[int] = None,
+        shape: Optional[Iterable[int]] = None,
+        traces: bool = False,
+        traces_additive: bool = False,
+        tc_trace: Union[float, torch.Tensor] = 20.0,
+        trace_scale: Union[float, torch.Tensor] = 1.0,
+        sum_input: bool = False,
+        on_cells: bool = True,
+        burst_time: int = 20,
+        **kwargs,
+    ) -> None:
+        # language=rst
+        """
+        Instantiates a layer of input neurons.
+
+        :param n: The number of neurons in the layer.
+        :param shape: The dimensionality of the layer.
+        :param traces: Whether to record decaying spike traces.
+        :param traces_additive: Whether to record spike traces additively.
+        :param tc_trace: Time constant of spike trace decay.
+        :param trace_scale: Scaling factor for spike trace.
+        :param sum_input: Whether to sum all inputs.
+        """
+        super().__init__(
+            n=n,
+            shape=shape,
+            traces=traces,
+            traces_additive=traces_additive,
+            tc_trace=tc_trace,
+            trace_scale=trace_scale,
+            sum_input=sum_input,
+        )
+
+        self.on_cells = on_cells
+        self.burst_time = burst_time
+
+        self.previous_fire = torch.zeros((1,shape[0], shape[1]))
+
+        self.previous_fire = torch.nn.Parameter(self.previous_fire, requires_grad=False)
+
+    def forward(self, x: torch.Tensor) -> None:
+        # language=rst
+        """
+        On each simulation step, set the spikes of the population equal to the inputs.
+
+        :param x: Inputs to the layer.
+        """
+        
+        #count timings
+        self.previous_fire -= 1
+        self.previous_fire = nn.Parameter(torch.clamp(self.previous_fire, min=0), requires_grad = False)
+
+        #update according to delta code
+        if(self.on_cells): self.s = torch.where((self.previous_fire <= 1) & (x == 1), 1, 0)
+        else: self.s = torch.where((self.previous_fire == 1) & (x == 0), 1, 0)
+
+        #get new spikes
+        self.previous_fire = nn.Parameter(torch.where(x == 1, (self.burst_time + 1)*torch.ones_like(self.previous_fire), self.previous_fire), requires_grad = False)
+        
+        super().forward(x)
+
+    def reset_state_variables(self) -> None:
+        # language=rst
+        """
+        Resets relevant state variables.
+        """
+        super().reset_state_variables()
+
+        self.previous_fire *= 0
 
 
 class DiehlAndCookNodesContinual(Nodes):
@@ -420,7 +498,7 @@ class DiehlCookDelayedSTDP(LearningRule):
         # language=rst
         """
         Diehl&Cook's learning rule for ``Connection`` subclass of ``AbstractConnection``
-        class.
+        class with synaptic delays and delay learning
         """
         batch_size = self.source.batch_size
 
@@ -442,6 +520,11 @@ class DiehlCookDelayedSTDP(LearningRule):
             update += self.nu[1] * outer_product * torch.pow((self.wmax - self.connection.w), 0.2)
         
             if(self.connection.dlearning):
+                #
+                # PLEASE NOTE: This part is a bit of a mess. I changed it a lot of times and tried to now clean it up as best as
+                # possible. However, there may still be some issues with the delay learning implementations. If any doubt arises
+                # feel free to contact me under tales.braig@gmail.com
+                #
 
                 #capped traces
                 source_x_capped = self.connection.xpre_capped
@@ -452,82 +535,100 @@ class DiehlCookDelayedSTDP(LearningRule):
                 if(self.connection.target.traces_additive): target_x_capped *= self.connection.target.x.clamp(min=0.,max=1.)
                 else: target_x_capped *= self.connection.target.x
 
-                #print("Target x capped: " + str(target_x_capped.sum()))
 
-                #-dt/tc_trace
-                #source_alpha_ln = -self.connection.source.dt/self.connection.tc_trace_delay
-                #target_alpha_ln = -self.connection.target.dt/self.connection.target.tc_trace_delay
+                # #begin of naive hard approach
 
-                #source_alpha = self.connection.alpha_delay
-                #target_alpha = self.connection.target.trace_decay_delay
+                # delay_steps = 2
 
-                #delay updates correct post and pre
-                #decrease_delay_update = torch.where((source_x_capped > source_alpha) & (target_x_capped > 0) & (target_x_capped <= target_alpha),
-                #                             torch.round(torch.log(target_x_capped)/target_alpha_ln), torch.zeros_like(target_x_capped))
+                # #delay update hard (if matched spikes, no update, if too early delay, else deacrease)
+                # update_steps = torch.where((source_x > 0.) & (source_x < 1.), np.log(1./self.connection.alpha)*torch.log(source_x), delay_steps*(source_x - 1))
 
-                #increase_delay_update = torch.where((target_x_capped > target_alpha) & (source_x_capped > 0) & (source_x_capped <= 1),
-                #                             torch.round(torch.log(source_x_capped)/source_alpha_ln), torch.zeros_like(source_x_capped))
+                # #begin of naive hard approach
 
-                # print("DEcreases: " + str(((source_x_capped > source_alpha).sum())))# & (target_x_capped > 0) & (target_x_capped <= target_alpha)).sum()))
-                # print("Increases: " + str(((target_x_capped.max()))) + str(((target_x_capped > target_alpha) & (source_x_capped > 0) & (source_x_capped <= 1)).sum()))
-                # print("\n")
 
-                # #some factors to try out TODO
-                #delay_lr = float(0.01)
-                #homeostasis_factor = float(1/2.0)
-                #sigmoid_factor = float(5.0)
-                delay_pre_tar = float(0.8)
-                #delay_post_tar = float(-0.8)
+
+
+
+
+
+
+                # #begin of naive soft approach
+
+                # delay_steps = 2
 
                 # #delay update soft (if matched spikes, no update, if too early delay, else deacrease)
-                # steps = delay_steps*torch.where((source_x > 0.) & (source_x < 1.), torch.ceil((1 - source_x)), source_x - 1)
+                # update_steps = delay_steps*torch.where((source_x > 0.) & (source_x < 1.), torch.ceil((1 - source_x)), source_x - 1)
+
+                # #begin of naive soft approach
+
+
+
+
+
+
+
+
+                # #begin of homeostasis learn approach
+                # delay_lr = float(0.02)
+                # homeostasis_factor = float(1/4.0)
+
+                # steps = delay_lr*self.connection.dmax*torch.where(source_x_capped > 0., -torch.exp(-source_x_capped), torch.zeros_like(source_x_capped))
+
+                # delay_update = self.reduction(torch.where(target_s.bool(), -steps, torch.zeros_like(steps)), dim=0)
+                
+                # #add some homeostatic demyelinization
+                # demyelinization = homeostasis_factor*torch.ones_like(source_x_capped)
+
+                # delay_update.add_(demyelinization*self.connection.dmax)
+
+                # update_steps = delay_update.round()
+                # #end of homeostasis learn approach
+
+
+
+
+
+
+
+                # #begin of homeostasis sigmoid learn approach
+                # delay_lr = float(0.02)
+                # homeostasis_factor = float(1/4.0)
+                # sigmoid_factor = float(5.0)
+
+                # steps = delay_lr*self.connection.dmax*torch.where(source_x_capped > 0., torch.sigmoid(sigmoid_factor*source_x_capped), torch.zeros_like(source_x_capped))
+
+                # delay_update = self.reduction(torch.where(target_s.bool(), -steps, torch.zeros_like(steps)), dim=0)
+                
+                # #add some homeostatic demyelinization
+                # demyelinization = homeostasis_factor*torch.ones_like(source_x_capped)
+
+                # delay_update.add_(demyelinization*self.connection.dmax)
+
+                # update_steps = delay_update.round()
+                # #end of homeostasis  sigmoid learn approach
+
+
+
+
+
+
+                #begin of inverted Diehl Cook approach
+
+                delay_pre_tar = float(0.8)
 
                 #simple rule, if pre trace bigger than certain value, maybe another one can still come after to build a burst so add some delay
                 #if trace already decayed more than a certain value, go back to learn the burst
-                #if there was no pre spike for the out spike then up the delay to, maybe later there is a correspondence to learn still
                 update_value = torch.ones_like(self.connection.d)
                 update_steps = torch.where((source_x_capped > delay_pre_tar) | (source_x_capped == 0), -update_value, update_value)
                 update_steps = self.reduction(torch.where((target_s.bool()) & (source_x_capped < delay_pre_tar),
                                                             update_steps, torch.zeros_like(update_steps)), dim=0)
 
-                # #delay update hard (if matched spikes, no update, if too early delay, else deacrease)
-                # #steps = torch.where((source_x > 0.) & (source_x < 1.), np.log(1./self.connection.alpha)*torch.log(source_x), delay_steps*(source_x - 1))
-
-                #demyelinization = homeostasis_factor*torch.ones_like(source_x_capped)
-
-                #delay update soft (if they fire together input fires even a bit earlier)
-                #steps = delay_lr*self.connection.dmax *torch.where(source_x_capped > delay_x_tar, torch.exp(-source_x_capped), demyelinization)
-
-                #post pre approach
-                #first calculate difference between xpost and xpre * sigmoid factor and whereever they are over the targets record the sigmoids
-                #xdiff = sigmoid_factor*(target_x_capped - source_x_capped)
-                #delay_update = delay_lr*self.connection.dmax*torch.where((xdiff >= delay_post_tar) & (xdiff <= delay_pre_tar),
-                #                                                                        torch.sigmoid(xdiff), demyelinization)
-            
-
-                #delay_update = delay_lr*self.connection.dmax*self.reduction(torch.where((target_s.bool()),
-                #                                                -torch.exp(-source_x_capped), demyelinization), dim=0)
-
-                #print(((target_s.bool()) & (source_x_capped > delay_x_tar)).sum())
-
-                #add some homeostatic normalization and demyelinization
-                #delay_update /= delay_update.sum(dim=0)
-                #delay_update *= delay_lr*(self.connection.dmax - self.connection.dmin)
-                #delay_update.add_(homeostasis_steps*self.connection.dmax)
-
-                #print(steps)
-
-                #delay_update.round()
-                #print(delay_update.sum())
+                #end of inverted Diehl Cook approach
 
         self.connection.w += update
-        #decrease_delay_update = torch.where(decrease_delay_update.int() <= self.connection.d,
-        #                decrease_delay_update, torch.zeros_like(decrease_delay_update)) #don't decrease if there wouldn't be an impact anyway
-        # self.connection.d -= decrease_delay_update.int()
-        # self.connection.d += increase_delay_update.int()
 
         if(self.connection.dlearning):
-            #save old delays
+            #save old delays to correct the current spikes being delayed
             old_delays = self.connection.d
 
             self.connection.d += update_steps.int()
@@ -535,17 +636,6 @@ class DiehlCookDelayedSTDP(LearningRule):
 
             #update saved delays to not create errors of still propagating delayed spikes
             self.connection.delayed_spikes.add_((self.connection.delayed_spikes // old_delays) * (old_delays - self.connection.d))
-
-        #homeostasis rule includes decrease and increase in one
-        #self.connection.d += delay_update.int()
-        #self.connection.d.clamp_(min=self.connection.dmin + 1, max=self.connection.dmax + 1)
-
-        #update saved delays to not create errors of still propagating delayed spikes
-        #self.connection.delayed_spikes.add_((self.connection.delayed_spikes // old_delays) * (old_delays - self.connection.d))
-
-        #print(self.connection.d.max())
-
-        #print(self.connection.d)
 
 
         super().update()
@@ -622,3 +712,86 @@ class PostPreDelayed(LearningRule):
             del source_x, target_s
 
         super().update()
+
+class JustPassOnConnection(AbstractConnection):
+    # language=rst
+    """
+    Specifies synapses between one or two populations of neurons.
+    """
+
+    def __init__(
+        self,
+        source: Nodes,
+        target: Nodes,
+        nu: Optional[Union[float, Sequence[float]]] = None,
+        reduction: Optional[callable] = None,
+        weight_decay: float = 0.0,
+        **kwargs
+    ) -> None:
+        # language=rst
+        """
+        Instantiates a :code:`Connection` object.
+
+        :param source: A layer of nodes from which the connection originates.
+        :param target: A layer of nodes to which the connection connects.
+        :param nu: Learning rate for both pre- and post-synaptic events.
+        :param reduction: Method for reducing parameter updates along the minibatch
+            dimension.
+        :param weight_decay: Constant multiple to decay weights by on each iteration.
+
+        Keyword arguments:
+
+        :param LearningRule update_rule: Modifies connection parameters according to
+            some rule.
+        :param torch.Tensor w: Strengths of synapses.
+        :param torch.Tensor b: Target population bias.
+        :param float wmin: Minimum allowed value on the connection weights.
+        :param float wmax: Maximum allowed value on the connection weights.
+        :param float norm: Total weight per target neuron normalization constant.
+        """
+        super().__init__(source, target, nu, reduction, weight_decay, **kwargs)
+
+        w = kwargs.get("w", None)
+        if w is None:
+            if self.wmin == -np.inf or self.wmax == np.inf:
+                w = torch.clamp(torch.rand(source.n, target.n), self.wmin, self.wmax)
+            else:
+                w = self.wmin + torch.rand(source.n, target.n) * (self.wmax - self.wmin)
+        else:
+            if self.wmin != -np.inf or self.wmax != np.inf:
+                w = torch.clamp(torch.as_tensor(w), self.wmin, self.wmax)
+
+        self.w = Parameter(w, requires_grad=False)
+
+        b = kwargs.get("b", None)
+        if b is not None:
+            self.b = Parameter(b, requires_grad=False)
+        else:
+            self.b = None
+
+    def compute(self, s: torch.Tensor) -> torch.Tensor:
+        # language=rst
+        """
+        Compute pre-activations given spikes using connection weights.
+
+        :param s: Incoming spikes.
+        :return: just passes the spikes on.
+        """
+        return s
+    
+    def update(self, **kwargs) -> None:
+        # language=rst
+        """
+        Compute connection's update rule.
+        """
+        super().update(**kwargs)
+
+    def normalize(self) -> None:
+        5+5
+
+    def reset_state_variables(self) -> None:
+        # language=rst
+        """
+        Contains resetting logic for the connection.
+        """
+        super().reset_state_variables()

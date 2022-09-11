@@ -50,4 +50,4 @@ Auditory_network_loading_test_and_spikerecord_delta_code.py - A script for loadi
 
 
 
-Anlaytics based on saved activity profiles (after train and test).ipynb - Notebook to load the saved spiking profiles and perform the SVM, population dot product and single neuron evaluations.
+Anlaytics based on saved activity profiles (after train and test).ipynb - Notebook to load the saved spiking profiles and perform the SVM, population dot product and single neuron evaluations. (NOTE: this has to go into the correct folder or adapted)
